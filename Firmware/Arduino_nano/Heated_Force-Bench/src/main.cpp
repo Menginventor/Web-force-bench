@@ -136,7 +136,7 @@ uint8_t bufferIdx = 0;
 // Forward declarations
 void handleSerialInput();
 void executeCommand(char *cmd);
-void printHelp();
+void printHelp(const char *section = NULL);
 void printStatus(float currentTemp);
 void startTuning(float currentTemp);
 void stopTuning(bool notifyUser);
@@ -924,90 +924,73 @@ void printStatus(float currentTemp) {
   Serial.println(F("-----------------------------------------------------"));
 }
 
+void printHelpScale() {
+  Serial.println(F("\n--- [1] LOAD CELL / SCALE FUNCTIONS ---"));
+  Serial.println(F("  TARE                 Zero load cell (averages 20 samples, saved to EEPROM)"));
+  Serial.println(F("  CAL <weight>         Calibrate with known weight (averages 20 samples, saved to EEPROM)"));
+  Serial.println(F("  SCALE <val>          Set calibration scale factor directly (saved to EEPROM)"));
+  Serial.println(F("  WEIGHT               Display current weight, raw reading, tare and scale"));
+  Serial.println(F("  SET TARE [val]       Zero load cell (or set raw tare offset manually)"));
+  Serial.println(F("  SET CAL <val>        Calibrate scale factor using known weight"));
+  Serial.println(F("  SET SCALE <val>      Set load cell calibration scale factor"));
+}
+
+void printHelpTempControl() {
+  Serial.println(F("\n--- [2] TEMPERATURE CONTROL (PI & MANUAL) ---"));
+  Serial.println(F("  CONTROL [ON/OFF|1/0] Start or stop closed-loop PI temperature controller"));
+  Serial.println(F("  START CONTROL        Start closed-loop PI temperature controller"));
+  Serial.println(F("  STOP CONTROL         Stop PI controller & turn heater OFF"));
+  Serial.println(F("  SP <temp>            Set target setpoint in degC (or SET SP <temp>)"));
+  Serial.println(F("  KP <val> / KI <val>  Set PI proportional / integral gains (saved to EEPROM)"));
+  Serial.println(F("  UMIN <val> / UMAX <val> Set PWM output saturation limits 0 - 255 (saved to EEPROM)"));
+  Serial.println(F("  PWM <val>            Manual PWM output (0 - 255, turns off PI / tuning)"));
+}
+
+void printHelpTempTuning() {
+  Serial.println(F("\n--- [3] TEMPERATURE TUNING & SETUP ---"));
+  Serial.println(F("  TUNE <tmin> <tmax> <pmin> <pmax> <cycles>"));
+  Serial.println(F("                       Start relay autotuning with specified parameters"));
+  Serial.println(F("  START TUNE           Start relay autotuning using current parameters"));
+  Serial.println(F("  STOP TUNE            Stop autotuning & turn heater OFF immediately"));
+  Serial.println(F("  SET TMIN <val>       Set autotune lower temperature threshold in degC"));
+  Serial.println(F("  SET TMAX <val>       Set autotune upper temperature threshold in degC"));
+  Serial.println(F("  SET PMIN <val>       Set autotune minimum PWM (0 - 255)"));
+  Serial.println(F("  SET PMAX <val>       Set autotune maximum PWM (0 - 255)"));
+  Serial.println(F("  SET CYCLES <n>       Set number of relay oscillation cycles (1 - 20)"));
+  Serial.println(F("  STATUS               Show current temperatures, load cell, PI, PWM & settings"));
+  Serial.println(F("  SAVE / LOAD          Save or reload parameters to / from EEPROM"));
+  Serial.println(F("  REPORT [ON/OFF]      Enable / disable 10 Hz telemetry data streaming"));
+  Serial.println(F("  VERBOSE [ON/OFF]     Toggle Voltage, Raw ADC & Raw Weight in stream"));
+}
+
 /**
- * Prints user help menu
+ * Prints user help menu with organized sections
  */
-void printHelp() {
-  Serial.println(
-      F("\n=============================================================="));
+void printHelp(const char *section) {
+  if (section) {
+    if (strcasecmp(section, "SCALE") == 0 || strcasecmp(section, "LOADCELL") == 0 || strcasecmp(section, "WEIGHT") == 0) {
+      printHelpScale();
+      return;
+    }
+    if (strcasecmp(section, "CONTROL") == 0 || strcasecmp(section, "TEMP") == 0 || strcasecmp(section, "PI") == 0) {
+      printHelpTempControl();
+      return;
+    }
+    if (strcasecmp(section, "TUNE") == 0 || strcasecmp(section, "TUNING") == 0 || strcasecmp(section, "SETUP") == 0) {
+      printHelpTempTuning();
+      return;
+    }
+  }
+
+  Serial.println(F("\n=============================================================="));
   Serial.println(F("             HEATED FORCE-BENCH COMMAND MENU"));
-  Serial.println(
-      F("=============================================================="));
-  Serial.println(F("COMMANDS:"));
-  Serial.println(F("  HELP or ?"));
-  Serial.println(F("    Display this help menu."));
-  Serial.println(F("  STATUS"));
-  Serial.println(
-      F("    Show current temperatures, load cell, PI state, PWM and settings."));
-  Serial.println(F("  TARE"));
-  Serial.println(
-      F("    Zero the load cell (averages 20 samples, saved to EEPROM)."));
-  Serial.println(F("  CAL <weight> or SET CAL <weight>"));
-  Serial.println(
-      F("    Calibrate load cell with known weight (averages 20 samples, saves scale factor)."));
-  Serial.println(F("  SCALE <val> or SET SCALE <val>"));
-  Serial.println(
-      F("    Set load cell calibration scale factor (saved to EEPROM)."));
-  Serial.println(F("  WEIGHT"));
-  Serial.println(
-      F("    Display current load cell weight, raw reading, and calibration."));
-  Serial.println(F("  START [CONTROL|TUNE|REPORT]"));
-  Serial.println(
-      F("    Start closed-loop PI controller, or autotuning, or reporting."));
-  Serial.println(F("  STOP [CONTROL|TUNE|REPORT]"));
-  Serial.println(
-      F("    Stop PI controller / autotuning & shut heater OFF."));
-  Serial.println(F("  CONTROL [ON/OFF|1/0] or PI [ON/OFF|1/0]"));
-  Serial.println(
-      F("    Start or stop closed-loop PI temperature controller."));
-  Serial.println(F("  SP <temp> or SETPOINT <temp>"));
-  Serial.println(
-      F("    Set target temperature in degC (Runtime setting)."));
-  Serial.println(F("  KP <val> / KI <val>"));
-  Serial.println(
-      F("    Set PI proportional / integral gain (saved to EEPROM)."));
-  Serial.println(F("  UMIN <val> / UMAX <val>"));
-  Serial.println(
-      F("    Set output PWM saturation limits 0 - 255 (saved to EEPROM)."));
-  Serial.println(F("  SAVE / LOAD"));
-  Serial.println(
-      F("    Manually save or reload parameters to / from EEPROM."));
-  Serial.println(F("  TUNE <t_min> <t_max> <pwm_min> <pwm_max> <cycles>"));
-  Serial.println(
-      F("    Configure parameters and start relay tuning immediately."));
-  Serial.println(F("  REPORT [ON/OFF|ENABLE/DISABLE|START/STOP|1/0]"));
-  Serial.println(
-      F("    Start, stop, or toggle 10 Hz status telemetry reporting (Default: OFF)."));
-  Serial.println(F("  PWM <val>"));
-  Serial.println(
-      F("    Set manual PWM (0 - 255) on pin 9 (aborts active closed-loop)."));
-  Serial.println(F("  VERBOSE [ON/OFF]"));
-  Serial.println(
-      F("    Toggle Voltage, Raw ADC & Raw Weight in telemetry stream."));
-  Serial.println(F("  SET SP <val>     - Set target setpoint in degC"));
-  Serial.println(F("  SET KP <val>     - Set proportional gain Kp"));
-  Serial.println(F("  SET KI <val>     - Set integral gain Ki"));
-  Serial.println(F("  SET UMIN <val>   - Set minimum output saturation limit"));
-  Serial.println(F("  SET UMAX <val>   - Set maximum output saturation limit"));
-  Serial.println(F("  SET CAL <val>    - Calibrate scale factor using known weight"));
-  Serial.println(F("  SET SCALE <val>  - Set load cell calibration scale factor"));
-  Serial.println(F("  SET TARE [val]   - Zero load cell (or set tare offset manually)"));
-  Serial.println(F("  SET TMIN <val>   - Set Temp Min threshold in degC"));
-  Serial.println(F("  SET TMAX <val>   - Set Temp Max threshold in degC"));
-  Serial.println(F("  SET PMIN <val>   - Set PWM Min (0 - 255)"));
-  Serial.println(F("  SET PMAX <val>   - Set PWM Max (0 - 255)"));
-  Serial.println(F("  SET CYCLES <n>   - Set number of relay cycles (1 - 20)"));
-  Serial.println(F("  SET VERBOSE <1/0>- Enable/disable verbose telemetry"));
-  Serial.println(F("  SET REPORT <1/0> - Enable/disable telemetry reporting"));
-  Serial.println(
-      F("--------------------------------------------------------------"));
-  Serial.println(F("ANTI-WINDUP PROTOCOL:"));
-  Serial.println(
-      F("  Instant back-calculation clamps integral accumulation when"));
-  Serial.println(
-      F("  actuator saturates at U_max or U_min to eliminate overshoot lag."));
-  Serial.println(
-      F("=============================================================="));
+  Serial.println(F("=============================================================="));
+  printHelpScale();
+  printHelpTempControl();
+  printHelpTempTuning();
+  Serial.println(F("\n--------------------------------------------------------------"));
+  Serial.println(F("Type 'HELP <SCALE|CONTROL|TUNE>' for a specific section."));
+  Serial.println(F("=============================================================="));
 }
 
 /**
@@ -1048,7 +1031,8 @@ void executeCommand(char *cmd) {
     return;
 
   if (strcasecmp(token, "HELP") == 0 || strcmp(token, "?") == 0) {
-    printHelp();
+    char *sub = strtok(NULL, " \t,");
+    printHelp(sub);
   } else if (strcasecmp(token, "STATUS") == 0) {
     printStatus(currentTemp);
   } else if (strcasecmp(token, "STOP") == 0) {
