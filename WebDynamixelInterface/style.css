@@ -1159,3 +1159,13 @@ input:checked + .toggle-slider:before {
   color: var(--accent-cyan);
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning .sync-icon {
+  display: inline-block;
+  animation: spin 0.75s linear infinite;
+}
+

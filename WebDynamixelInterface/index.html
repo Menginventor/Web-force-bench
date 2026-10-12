@@ -156,6 +156,10 @@
           <span class="servo-model-badge" id="activeModelDisplay">XL430-W250</span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
+          <button id="btnSyncStatus" class="btn-secondary" style="padding: 3px 9px; font-size: 0.72rem; display: flex; align-items: center; gap: 4px;" title="Sync Mode & Torque with Motor Hardware">
+            <span class="sync-icon">🔄</span>
+            <span>SYNC MOTOR</span>
+          </button>
           <span class="servo-model-badge" id="activeModeBadge" style="background: rgba(16, 185, 129, 0.2); color: #34d399;">MODE: POSITION (3)</span>
           <div class="servo-protocol-tag" id="activeProtocolBadge">PROTOCOL 2.0</div>
         </div>
@@ -173,6 +177,7 @@
           <option value="16">Mode 16: PWM Control</option>
         </select>
         <button id="btnSetOperatingMode" class="btn-primary" style="padding: 5px 12px; font-size: 0.78rem;">SET MODE</button>
+        <button id="btnReadOperatingMode" class="btn-secondary" style="padding: 5px 10px; font-size: 0.78rem;" title="Query Operating Mode directly from actuator">READ MODE</button>
       </div>
 
       <!-- Torque Inactive Warning Banner -->
@@ -283,7 +288,10 @@
       <div class="switches-row">
         <div class="switch-card">
           <div>
-            <div class="switch-label-title">TORQUE ENABLE</div>
+            <div class="switch-label-title" style="display: flex; align-items: center; gap: 6px;">
+              <span>TORQUE ENABLE</span>
+              <button id="btnReadTorque" class="btn-secondary" style="padding: 1px 6px; font-size: 0.68rem; line-height: 1.2;" title="Query Torque state directly from motor">↻ READ</button>
+            </div>
             <div class="switch-label-desc" id="torqueStateLabel">Motor Free (Off)</div>
           </div>
           <label class="toggle-switch">
