@@ -43,14 +43,8 @@ const float V_0C = 0.400f; // 400 mV output at 0 °C
 const float TC = 0.0195f;  // 19.5 mV/°C temperature coefficient
 #endif
 
-// Number of oversampling samples for stable temperature readings
-const int NUM_SAMPLES = 16;
-
-// Low-pass filter (Exponential Moving Average / 1st-order IIR) configuration
-// alpha is the smoothing factor: 0.0 < alpha <= 1.0 (1.0 = raw / no filtering)
-// At 10 Hz sampling rate, alpha = 0.20 provides a cutoff of ~0.35 Hz for smooth tracking
-float lpfAlpha = 0.20f;
-float filteredTempC = -999.0f; // Seeded with first sample in setup()
+// Direct temperature reading (no ADC filter or averaging)
+float currentTempC = -999.0f;
 
 // 10 Hz Control Loop Timing (100 ms)
 const unsigned long LOOP_INTERVAL_MS = 100;
@@ -78,7 +72,7 @@ int tunePwmMin = 0;        // Minimum PWM (0 - 255)
 int tunePwmMax = 255;      // Maximum PWM (0 - 255)
 int tuneCycles = 3;        // Number of relay cycles N (1 - 20)
 bool showVerboseTelemetry = false; // Default: only show Temp and PWM
-bool loggingEnabled = true;        // 10 Hz telemetry logging active by default
+bool loggingEnabled = false;        // Telemetry reporting disabled by default
 
 // Active tuning runtime variables
 int currentCycle = 0;
@@ -88,14 +82,8 @@ unsigned long cycleStartTime = 0;
 float cyclePeakTemp = -999.0f;
 float cycleValleyTemp = 999.0f;
 
-// Cycle metrics storage for autotune PID calculation
+// Maximum relay tuning cycles
 const int MAX_STORED_CYCLES = 20;
-struct CycleMetric {
-  float periodSec;
-  float peakTemp;
-  float valleyTemp;
-};
-CycleMetric cycleHistory[MAX_STORED_CYCLES];
 
 // Serial command buffer
 char serialBuffer[64];
@@ -110,7 +98,7 @@ void startTuning(float currentTemp);
 void stopTuning(bool notifyUser);
 void updateTuningStateMachine(float currentTemp);
 void finishTuning();
-float readRawTemperature(float &voutOut, float &rawAdcOut);
+float readTemperature(float &voutOut, int &rawAdcOut);
 
 void setup() {
   // CRITICAL: Set analog reference to EXTERNAL BEFORE any analogRead()
@@ -133,15 +121,16 @@ void setup() {
   analogRead(ANALOG_PIN);
   delay(10);
 
-  // Initialize low-pass filter with ambient temperature reading
+  // Initial temperature reading directly from ADC
   float initVout = 0.0f;
-  float initRaw = 0.0f;
-  filteredTempC = readRawTemperature(initVout, initRaw);
+  int initRaw = 0;
+  currentTempC = readTemperature(initVout, initRaw);
 
   Serial.println(F("\n=================================================="));
   Serial.println(F("Heated Force-Bench Temperature Controller Ready"));
   Serial.println(F("Control Loop: 10 Hz | Heater Output: Pin 9"));
   Serial.println(F("Type 'HELP' or '?' for available commands."));
+  Serial.println(F("Telemetry Reporting: OFF by default ('REPORT ON' to enable)"));
   Serial.println(F("=================================================="));
 
   lastLoopTime = millis();
@@ -159,38 +148,29 @@ void loop() {
       lastLoopTime = currentMillis; // Prevent slip accumulation
     }
 
-    // A. Read sensor and calculate raw temperature
+    // A. Read sensor directly from ADC (single conversion, no filter or averaging)
     float vout = 0.0f;
-    float avgRawADC = 0.0f;
-    float rawTempC = readRawTemperature(vout, avgRawADC);
+    int rawADC = 0;
+    float tempC = readTemperature(vout, rawADC);
+    currentTempC = tempC;
 
-    // B. Apply low-pass filter (Exponential Moving Average / 1st-order IIR)
-    if (filteredTempC < -900.0f) {
-      filteredTempC = rawTempC;
-    } else {
-      filteredTempC += lpfAlpha * (rawTempC - filteredTempC);
-    }
-    float tempC = filteredTempC;
-
-    // C. Update relay tuning state machine
+    // B. Update relay tuning state machine
     updateTuningStateMachine(tempC);
 
-    // E. Apply current PWM to pin 9
+    // C. Apply current PWM to pin 9
     analogWrite(PWM_PIN, currentPwm);
 
-    // F. 10 Hz Telemetry output (shows filtered Temp and PWM by default when logging is enabled)
-    if (loggingEnabled) {
+    // D. 10 Hz Telemetry output (active when explicitly enabled OR automatically during autotuning)
+    if (loggingEnabled || tuneState != STATE_IDLE) {
       Serial.print(F("Temperature: "));
-      Serial.print(tempC, 2); // e.g. 25.40 °C (low-pass filtered)
+      Serial.print(tempC, 2); // e.g. 25.40 °C
       Serial.print(F(" degC, PWM: "));
       Serial.print(currentPwm);
       if (showVerboseTelemetry) {
-        Serial.print(F(", RawTemp: "));
-        Serial.print(rawTempC, 2);
-        Serial.print(F(" degC, Voltage: "));
+        Serial.print(F(", Voltage: "));
         Serial.print(vout, 4); // e.g. 0.7540 V
         Serial.print(F(" V, RawADC: "));
-        Serial.print(avgRawADC, 1);
+        Serial.print(rawADC);
       }
       Serial.println();
     }
@@ -198,15 +178,11 @@ void loop() {
 }
 
 /**
- * Reads sensor with oversampling and computes raw temperature in °C
+ * Reads sensor directly from ADC (single conversion, no filter or average) and computes temperature in °C
  */
-float readRawTemperature(float &voutOut, float &rawAdcOut) {
-  long adcSum = 0;
-  for (int i = 0; i < NUM_SAMPLES; i++) {
-    adcSum += analogRead(ANALOG_PIN);
-  }
-  rawAdcOut = (float)adcSum / NUM_SAMPLES;
-  voutOut = (rawAdcOut * V_REF) / ADC_RESOLUTION;
+float readTemperature(float &voutOut, int &rawAdcOut) {
+  rawAdcOut = analogRead(ANALOG_PIN);
+  voutOut = ((float)rawAdcOut * V_REF) / ADC_RESOLUTION;
   float tempC = (voutOut - V_0C) / TC;
   return tempC;
 }
@@ -306,11 +282,6 @@ void updateTuningStateMachine(float currentTemp) {
       // Completed this cycle!
       float cycleDurationSec = (millis() - cycleStartTime) / 1000.0f;
 
-      if (currentCycle <= MAX_STORED_CYCLES) {
-        cycleHistory[currentCycle - 1].periodSec = cycleDurationSec;
-        cycleHistory[currentCycle - 1].peakTemp = cyclePeakTemp;
-        cycleHistory[currentCycle - 1].valleyTemp = cycleValleyTemp;
-      }
 
       Serial.print(F("[TUNE] >>> Cycle "));
       Serial.print(currentCycle);
@@ -383,6 +354,9 @@ void startTuning(float currentTemp) {
   Serial.print(F("Current Temp: "));
   Serial.print(currentTemp, 2);
   Serial.println(F(" degC"));
+  if (!loggingEnabled) {
+    Serial.println(F("[REPORT] Telemetry reporting active during autotuning."));
+  }
 
   tuningStartTime = millis();
   currentCycle = 0;
@@ -434,98 +408,26 @@ void stopTuning(bool notifyUser) {
   if (notifyUser) {
     Serial.println(F("\n[TUNE] *** PROCEDURE STOPPED: Heater turned OFF "
                      "immediately (PWM=0) ***"));
+    if (!loggingEnabled) {
+      Serial.println(F("[REPORT] Autotuning stopped: Telemetry stream stopped."));
+    }
   }
 }
 
 /**
- * Completed all N cycles - compute summary metrics and PID recommendations
+ * Completed all N cycles - finish tuning and shut off heater
  */
 void finishTuning() {
   tuneState = STATE_IDLE;
   currentPwm = 0;
   analogWrite(PWM_PIN, 0);
 
-  float totalDurationSec = (millis() - tuningStartTime) / 1000.0f;
-
-  // Average period and amplitude over completed cycles
-  float sumPeriod = 0.0f;
-  float sumAmplitude = 0.0f;
-  int validCycles = min(tuneCycles, MAX_STORED_CYCLES);
-
-  for (int i = 0; i < validCycles; i++) {
-    sumPeriod += cycleHistory[i].periodSec;
-    sumAmplitude +=
-        (cycleHistory[i].peakTemp - cycleHistory[i].valleyTemp) / 2.0f;
-  }
-
-  float avgPeriod = sumPeriod / validCycles;                 // Pu (seconds)
-  float avgAmplitude = sumAmplitude / validCycles;           // a (°C)
-  float relayStep = (float)(tunePwmMax - tunePwmMin) / 2.0f; // d
-
-  // Ultimate Gain: Ku = (4 * d) / (pi * a)
-  float ku = 0.0f;
-  if (avgAmplitude > 0.001f) {
-    ku = (4.0f * relayStep) / (3.14159265f * avgAmplitude);
-  }
-
-  // Classic Ziegler-Nichols PID
-  float zn_kp = 0.6f * ku;
-  float zn_ti = 0.5f * avgPeriod;
-  float zn_td = 0.125f * avgPeriod;
-  float zn_ki = (zn_ti > 0.001f) ? (zn_kp / zn_ti) : 0.0f;
-  float zn_kd = zn_kp * zn_td;
-
-  // Tyreus-Luyben PID (more conservative, reduced overshoot for thermal
-  // systems)
-  float tl_kp = ku / 3.2f;
-  float tl_ti = 2.2f * avgPeriod;
-  float tl_td = avgPeriod / 6.3f;
-  float tl_ki = (tl_ti > 0.001f) ? (tl_kp / tl_ti) : 0.0f;
-  float tl_kd = tl_kp * tl_td;
-
   Serial.println(F("\n=================================================="));
   Serial.println(F(">>> RELAY AUTOTUNING COMPLETE <<<"));
-  Serial.print(F("Total Tuning Time: "));
-  Serial.print(totalDurationSec, 1);
-  Serial.println(F(" s"));
-  Serial.print(F("Completed Cycles: "));
-  Serial.println(validCycles);
-  Serial.print(F("Avg Oscillation Period (Pu): "));
-  Serial.print(avgPeriod, 2);
-  Serial.println(F(" s"));
-  Serial.print(F("Avg Temp Amplitude (a):      "));
-  Serial.print(avgAmplitude, 2);
-  Serial.println(F(" degC"));
-  Serial.print(F("Ultimate Gain (Ku):          "));
-  Serial.println(ku, 3);
-  Serial.println(F("--------------------------------------------------"));
-  Serial.println(F("RECOMMENDED PID GAINS:"));
-  Serial.println(F("1. Ziegler-Nichols (Standard):"));
-  Serial.print(F("   Kp = "));
-  Serial.print(zn_kp, 3);
-  Serial.print(F(" | Ki = "));
-  Serial.print(zn_ki, 4);
-  Serial.print(F(" | Kd = "));
-  Serial.println(zn_kd, 3);
-  Serial.print(F("   (Ti = "));
-  Serial.print(zn_ti, 2);
-  Serial.print(F(" s | Td = "));
-  Serial.print(zn_td, 2);
-  Serial.println(F(" s)"));
-  Serial.println(
-      F("2. Tyreus-Luyben (Less Overshoot - Recommended for Thermal):"));
-  Serial.print(F("   Kp = "));
-  Serial.print(tl_kp, 3);
-  Serial.print(F(" | Ki = "));
-  Serial.print(tl_ki, 4);
-  Serial.print(F(" | Kd = "));
-  Serial.println(tl_kd, 3);
-  Serial.print(F("   (Ti = "));
-  Serial.print(tl_ti, 2);
-  Serial.print(F(" s | Td = "));
-  Serial.print(tl_td, 2);
-  Serial.println(F(" s)"));
   Serial.println(F("Heater is safely turned OFF (PWM=0)."));
+  if (!loggingEnabled) {
+    Serial.println(F("[REPORT] Autotuning complete: Telemetry stream stopped."));
+  }
   Serial.println(F("=================================================="));
 }
 
@@ -577,15 +479,17 @@ void printStatus(float currentTemp) {
   Serial.println(tunePwmMax);
   Serial.print(F("  Cycles:  "));
   Serial.println(tuneCycles);
-  Serial.print(F("  LPF Alpha: "));
-  Serial.print(lpfAlpha, 2);
-  Serial.println(F(" (1.0 = raw, lower = smoother)"));
   Serial.print(F("  Telemetry: "));
-  Serial.println(showVerboseTelemetry ? F("Verbose (Temp, PWM, Voltage, Raw)")
+  Serial.println(showVerboseTelemetry ? F("Verbose (Temp, PWM, Voltage, RawADC)")
                                       : F("Default (Temp, PWM only)"));
-  Serial.print(F("  Logging:   "));
-  Serial.println(loggingEnabled ? F("ENABLED (Streaming at 10 Hz)")
-                                : F("DISABLED (Stopped)"));
+  Serial.print(F("  Reporting: "));
+  if (loggingEnabled) {
+    Serial.println(F("ENABLED (Streaming at 10 Hz)"));
+  } else if (tuneState != STATE_IDLE) {
+    Serial.println(F("ACTIVE (Autotuning in progress)"));
+  } else {
+    Serial.println(F("DISABLED (Default off)"));
+  }
   Serial.println(F("-----------------------------------------------------"));
 }
 
@@ -607,22 +511,23 @@ void printHelp() {
   Serial.println(F("  TUNE <t_min> <t_max> <pwm_min> <pwm_max> <cycles>"));
   Serial.println(
       F("    Configure parameters and start relay tuning immediately."));
+  Serial.println(F("    (Telemetry reporting is automatically active during tuning)"));
   Serial.println(F("    Example: TUNE 40 50 0 255 3"));
-  Serial.println(F("  START [LOG]"));
+  Serial.println(F("  START [REPORT|LOG]"));
   Serial.println(
-      F("    Start relay tuning, or 'START LOG' to enable telemetry logging."));
-  Serial.println(F("  STOP [LOG]"));
+      F("    Start relay tuning, or 'START REPORT' to enable telemetry stream."));
+  Serial.println(F("  STOP [REPORT|LOG]"));
   Serial.println(
-      F("    Cancel tuning & heater OFF, or 'STOP LOG' to disable telemetry."));
-  Serial.println(F("  LOG [ON/OFF|START/STOP|1/0]"));
+      F("    Cancel tuning & heater OFF, or 'STOP REPORT' to stop telemetry."));
+  Serial.println(F("  REPORT [ON/OFF|ENABLE/DISABLE|START/STOP|1/0]"));
   Serial.println(
-      F("    Start, stop, or toggle 10 Hz telemetry logging stream."));
+      F("    Start, stop, or toggle 10 Hz status telemetry reporting (Default: OFF)."));
+  Serial.println(F("  ENABLE [REPORT|LOG] / DISABLE [REPORT|LOG]"));
+  Serial.println(
+      F("    Enable or disable 10 Hz telemetry stream."));
   Serial.println(F("  PWM <val>"));
   Serial.println(
       F("    Set manual PWM (0 - 255) on pin 9 (aborts active tuning)."));
-  Serial.println(F("  FILTER <alpha>"));
-  Serial.println(
-      F("    Set lowpass filter factor (0.01 - 1.0, default: 0.20)."));
   Serial.println(F("  VERBOSE [ON/OFF]"));
   Serial.println(
       F("    Toggle Voltage & Raw ADC in telemetry (Default: OFF, Temp & PWM only)."));
@@ -631,9 +536,8 @@ void printHelp() {
   Serial.println(F("  SET PMIN <val>   - Set PWM Min (0 - 255)"));
   Serial.println(F("  SET PMAX <val>   - Set PWM Max (0 - 255)"));
   Serial.println(F("  SET CYCLES <n>   - Set number of relay cycles (1 - 20)"));
-  Serial.println(F("  SET ALPHA <val>  - Set LPF filter factor (0.01 - 1.0)"));
   Serial.println(F("  SET VERBOSE <1/0>- Enable/disable verbose telemetry"));
-  Serial.println(F("  SET LOG <1/0>    - Enable/disable telemetry logging"));
+  Serial.println(F("  SET REPORT <1/0> - Enable/disable telemetry reporting"));
   Serial.println(
       F("--------------------------------------------------------------"));
   Serial.println(F("TUNING PROTOCOL BEHAVIOR:"));
@@ -645,7 +549,7 @@ void printHelp() {
   Serial.println(
       F("     Heat with PWM_max to T_max, then cool with PWM_min to T_min."));
   Serial.println(
-      F("  3. Repeats N times, shuts off heater, and computes PID gains."));
+      F("  3. Repeats N times and safely shuts off heater."));
   Serial.println(
       F("=============================================================="));
 }
@@ -680,8 +584,8 @@ void executeCommand(char *cmd) {
   if (*cmd == '\0')
     return;
 
-  // Use currently filtered temperature for commands
-  float currentTemp = (filteredTempC > -900.0f) ? filteredTempC : 25.0f;
+  // Use latest direct temperature reading for commands
+  float currentTemp = (currentTempC > -900.0f) ? currentTempC : 25.0f;
 
   char *token = strtok(cmd, " \t,");
   if (!token)
@@ -693,36 +597,62 @@ void executeCommand(char *cmd) {
     printStatus(currentTemp);
   } else if (strcasecmp(token, "STOP") == 0) {
     char *arg = strtok(NULL, " \t,");
-    if (arg && (strcasecmp(arg, "LOG") == 0 || strcasecmp(arg, "LOGGING") == 0)) {
+    if (arg && (strcasecmp(arg, "LOG") == 0 || strcasecmp(arg, "LOGGING") == 0 ||
+                strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0)) {
       loggingEnabled = false;
-      Serial.println(F("[LOG] Telemetry logging STOPPED (10 Hz stream disabled)"));
+      Serial.println(F("[REPORT] Telemetry reporting STOPPED (10 Hz stream disabled)"));
     } else {
       stopTuning(true);
     }
   } else if (strcasecmp(token, "START") == 0) {
     char *arg = strtok(NULL, " \t,");
-    if (arg && (strcasecmp(arg, "LOG") == 0 || strcasecmp(arg, "LOGGING") == 0)) {
+    if (arg && (strcasecmp(arg, "LOG") == 0 || strcasecmp(arg, "LOGGING") == 0 ||
+                strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0)) {
       loggingEnabled = true;
-      Serial.println(F("[LOG] Telemetry logging STARTED (10 Hz stream enabled)"));
+      Serial.println(F("[REPORT] Telemetry reporting STARTED (10 Hz stream enabled)"));
     } else {
       startTuning(currentTemp);
     }
-  } else if (strcasecmp(token, "LOG") == 0 || strcasecmp(token, "LOGGING") == 0) {
+  } else if (strcasecmp(token, "ENABLE") == 0) {
+    char *arg = strtok(NULL, " \t,");
+    if (!arg || strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0 ||
+        strcasecmp(arg, "LOG") == 0 || strcasecmp(arg, "LOGGING") == 0 || strcasecmp(arg, "STATUS") == 0) {
+      loggingEnabled = true;
+      Serial.println(F("[REPORT] Telemetry reporting ENABLED (10 Hz stream enabled)"));
+    } else {
+      Serial.println(F("[ERROR] Usage: ENABLE [REPORT|LOG]"));
+    }
+  } else if (strcasecmp(token, "DISABLE") == 0) {
+    char *arg = strtok(NULL, " \t,");
+    if (!arg || strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0 ||
+        strcasecmp(arg, "LOG") == 0 || strcasecmp(arg, "LOGGING") == 0 || strcasecmp(arg, "STATUS") == 0) {
+      loggingEnabled = false;
+      Serial.println(F("[REPORT] Telemetry reporting DISABLED (10 Hz stream disabled)"));
+    } else {
+      Serial.println(F("[ERROR] Usage: DISABLE [REPORT|LOG]"));
+    }
+  } else if (strcasecmp(token, "REPORT") == 0 || strcasecmp(token, "REPORTING") == 0 ||
+             strcasecmp(token, "LOG") == 0 || strcasecmp(token, "LOGGING") == 0) {
     char *arg = strtok(NULL, " \t,");
     if (!arg) {
       loggingEnabled = !loggingEnabled;
     } else if (strcasecmp(arg, "ON") == 0 || strcasecmp(arg, "START") == 0 ||
-               strcmp(arg, "1") == 0 || strcasecmp(arg, "ENABLE") == 0) {
+               strcasecmp(arg, "ENABLE") == 0 || strcasecmp(arg, "ENABLED") == 0 ||
+               strcmp(arg, "1") == 0) {
       loggingEnabled = true;
     } else if (strcasecmp(arg, "OFF") == 0 || strcasecmp(arg, "STOP") == 0 ||
-               strcmp(arg, "0") == 0 || strcasecmp(arg, "DISABLE") == 0) {
+               strcasecmp(arg, "DISABLE") == 0 || strcasecmp(arg, "DISABLED") == 0 ||
+               strcmp(arg, "0") == 0) {
       loggingEnabled = false;
+    } else if (strcasecmp(arg, "STATUS") == 0) {
+      printStatus(currentTemp);
+      return;
     } else {
       Serial.println(
-          F("[ERROR] Usage: LOG [ON/OFF|START/STOP|1/0] or START LOG / STOP LOG"));
+          F("[ERROR] Usage: REPORT [ON/OFF|ENABLE/DISABLE|START/STOP|1/0] or ENABLE/DISABLE REPORT"));
       return;
     }
-    Serial.print(F("[LOG] Telemetry logging: "));
+    Serial.print(F("[REPORT] Telemetry reporting: "));
     Serial.println(loggingEnabled ? F("ENABLED (Streaming at 10 Hz)")
                                   : F("DISABLED (Stopped)"));
   } else if (strcasecmp(token, "TUNE") == 0) {
@@ -752,7 +682,7 @@ void executeCommand(char *cmd) {
     char *val = strtok(NULL, " \t,=");
     if (!param || !val) {
       Serial.println(
-          F("[ERROR] Usage: SET <TMIN|TMAX|PMIN|PMAX|CYCLES|ALPHA|VERBOSE|LOG> <value>"));
+          F("[ERROR] Usage: SET <TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
       return;
     }
     if (strcasecmp(param, "TMIN") == 0) {
@@ -777,35 +707,22 @@ void executeCommand(char *cmd) {
       tuneCycles = constrain(atoi(val), 1, MAX_STORED_CYCLES);
       Serial.print(F("[CONFIG] Cycles set to: "));
       Serial.println(tuneCycles);
-    } else if (strcasecmp(param, "ALPHA") == 0 || strcasecmp(param, "LPF") == 0) {
-      lpfAlpha = constrain(atof(val), 0.01f, 1.0f);
-      Serial.print(F("[CONFIG] LPF Alpha set to: "));
-      Serial.println(lpfAlpha, 2);
     } else if (strcasecmp(param, "VERBOSE") == 0) {
       showVerboseTelemetry = (atoi(val) != 0 || strcasecmp(val, "ON") == 0 ||
                               strcasecmp(val, "TRUE") == 0);
       Serial.print(F("[CONFIG] Verbose telemetry: "));
       Serial.println(showVerboseTelemetry ? F("ON") : F("OFF"));
-    } else if (strcasecmp(param, "LOG") == 0 || strcasecmp(param, "LOGGING") == 0) {
+    } else if (strcasecmp(param, "LOG") == 0 || strcasecmp(param, "LOGGING") == 0 ||
+               strcasecmp(param, "REPORT") == 0 || strcasecmp(param, "REPORTING") == 0) {
       loggingEnabled = (atoi(val) != 0 || strcasecmp(val, "ON") == 0 ||
                         strcasecmp(val, "TRUE") == 0 || strcasecmp(val, "START") == 0 ||
                         strcasecmp(val, "ENABLE") == 0);
-      Serial.print(F("[CONFIG] Telemetry logging: "));
+      Serial.print(F("[CONFIG] Telemetry reporting: "));
       Serial.println(loggingEnabled ? F("ENABLED (Streaming at 10 Hz)")
                                     : F("DISABLED (Stopped)"));
     } else {
-      Serial.println(F(
-          "[ERROR] Unknown parameter. Valid: TMIN, TMAX, PMIN, PMAX, CYCLES, ALPHA, VERBOSE, LOG"));
-    }
-  } else if (strcasecmp(token, "FILTER") == 0 || strcasecmp(token, "ALPHA") == 0) {
-    char *arg = strtok(NULL, " \t,");
-    if (arg) {
-      lpfAlpha = constrain(atof(arg), 0.01f, 1.0f);
-      Serial.print(F("[CONFIG] LPF Alpha set to: "));
-      Serial.println(lpfAlpha, 2);
-    } else {
-      Serial.print(F("[CONFIG] Current LPF Alpha: "));
-      Serial.println(lpfAlpha, 2);
+      Serial.println(
+          F("[ERROR] Unknown parameter. Valid: TMIN, TMAX, PMIN, PMAX, CYCLES, VERBOSE, REPORT (or LOG)"));
     }
   } else if (strcasecmp(token, "VERBOSE") == 0) {
     char *arg = strtok(NULL, " \t,");
@@ -816,7 +733,7 @@ void executeCommand(char *cmd) {
       showVerboseTelemetry = !showVerboseTelemetry;
     }
     Serial.print(F("[CONFIG] Verbose telemetry: "));
-    Serial.println(showVerboseTelemetry ? F("ON (Temp, PWM, Voltage, Raw)")
+    Serial.println(showVerboseTelemetry ? F("ON (Temp, PWM, Voltage, RawADC)")
                                         : F("OFF (Temp, PWM only)"));
   } else if (strcasecmp(token, "PWM") == 0) {
     char *val = strtok(NULL, " \t,");
