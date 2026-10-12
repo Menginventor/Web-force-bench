@@ -235,7 +235,7 @@ void loop() {
       Serial.print(F("$DAT:Temp="));
       Serial.print(tempC, 2); // e.g. 25.40
       Serial.print(F(",Weight="));
-      Serial.print(currentWeight, 2); // e.g. 102.34
+      Serial.print(currentWeight, 3); // e.g. 0.125 kg
       Serial.print(F(",PWM="));
       Serial.print(currentPwm);
       if (piControlActive) {
@@ -374,26 +374,26 @@ void tareLoadcell() {
 
   Serial.print(F("[LOADCELL] Tared successfully. Offset set to: "));
   Serial.print(loadcellTareOffset);
-  Serial.println(F(" (Current Weight: 0.00, Saved to EEPROM)"));
+  Serial.println(F(" (Current Weight: 0.000 kg, Saved to EEPROM)"));
 }
 
 /**
  * Calibrates load cell using a known weight by averaging 20 samples
  */
 void calibrateLoadcell(float knownWeight) {
-  if (fabs(knownWeight) <= 1e-4f) {
-    Serial.println(F("[ERROR] Known weight must be non-zero! Usage: CAL <weight> (e.g. CAL 100 or CAL 500)"));
+  if (fabs(knownWeight) <= 1e-6f) {
+    Serial.println(F("[ERROR] Known weight must be non-zero! Usage: CAL <weight_kg> (e.g. CAL 0.5 or CAL 1.0)"));
     return;
   }
 
   Serial.println(F("\n---------------- LOAD CELL CALIBRATION ----------------"));
   Serial.print(F("Target Known Weight: "));
-  Serial.print(knownWeight, 2);
-  Serial.println();
+  Serial.print(knownWeight, 3);
+  Serial.println(F(" kg"));
   if (!loadcellTareInitialized || loadcellTareOffset == 0) {
     Serial.println(F("[TIP] For best accuracy, run 'TARE' with no load before 'CAL'."));
   }
-  Serial.println(F("Place known weight on the load cell now."));
+  Serial.println(F("Place known weight (in kg) on the load cell now."));
   Serial.print(F("Averaging 20 samples"));
 
   long avgRaw = 0;
@@ -428,8 +428,8 @@ void calibrateLoadcell(float knownWeight) {
   Serial.print(F("  New Scale:      "));
   Serial.println(loadcellScale, 4);
   Serial.print(F("  Current Weight: "));
-  Serial.print(currentWeight, 2);
-  Serial.println(F(" (Saved to EEPROM)"));
+  Serial.print(currentWeight, 3);
+  Serial.println(F(" kg (Saved to EEPROM)"));
   Serial.println(F("-------------------------------------------------------"));
 }
 
@@ -438,8 +438,8 @@ void calibrateLoadcell(float knownWeight) {
  */
 void handleCalibratePrompt() {
   Serial.println(F("[LOADCELL] Calibration mode"));
-  Serial.println(F("Usage: CAL <weight> (e.g. CAL 100 or CAL 500)"));
-  Serial.print(F("Enter known weight in grams/units (or wait 15s to cancel): "));
+  Serial.println(F("Usage: CAL <weight_kg> (e.g. CAL 0.5 or CAL 1.0)"));
+  Serial.print(F("Enter known weight in kg (or wait 15s to cancel): "));
 
   unsigned long startWait = millis();
   char inputBuf[16];
@@ -858,9 +858,9 @@ void printStatus(float currentTemp) {
   Serial.print(F("Current Temp: "));
   Serial.print(currentTemp, 2);
   Serial.println(F(" degC"));
-  Serial.print(F("Current Weight:"));
-  Serial.print(currentWeight, 2);
-  Serial.print(F(" (Raw: "));
+  Serial.print(F("Current Weight: "));
+  Serial.print(currentWeight, 3);
+  Serial.print(F(" kg (Raw: "));
   Serial.print(currentRawWeight);
   Serial.println(F(")"));
   Serial.print(F("Loadcell Cal: Tare="));
@@ -927,11 +927,11 @@ void printStatus(float currentTemp) {
 void printHelpScale() {
   Serial.println(F("\n--- [1] LOAD CELL / SCALE FUNCTIONS ---"));
   Serial.println(F("  TARE                 Zero load cell (averages 20 samples, saved to EEPROM)"));
-  Serial.println(F("  CAL <weight>         Calibrate with known weight (averages 20 samples, saved to EEPROM)"));
+  Serial.println(F("  CAL <weight_kg>      Calibrate with known weight in kg (averages 20 samples, saved to EEPROM)"));
   Serial.println(F("  SCALE <val>          Set calibration scale factor directly (saved to EEPROM)"));
-  Serial.println(F("  WEIGHT               Display current weight, raw reading, tare and scale"));
+  Serial.println(F("  WEIGHT               Display current weight in kg, raw reading, tare and scale"));
   Serial.println(F("  SET TARE [val]       Zero load cell (or set raw tare offset manually)"));
-  Serial.println(F("  SET CAL <val>        Calibrate scale factor using known weight"));
+  Serial.println(F("  SET CAL <kg>         Calibrate scale factor using known weight in kg"));
   Serial.println(F("  SET SCALE <val>      Set load cell calibration scale factor"));
 }
 
@@ -1184,8 +1184,8 @@ void executeCommand(char *cmd) {
     }
   } else if (strcasecmp(token, "WEIGHT") == 0) {
     Serial.print(F("[LOADCELL] Weight: "));
-    Serial.print(currentWeight, 2);
-    Serial.print(F(" | Raw: "));
+    Serial.print(currentWeight, 3);
+    Serial.print(F(" kg | Raw: "));
     Serial.print(currentRawWeight);
     Serial.print(F(" | Tare: "));
     Serial.print(loadcellTareOffset);

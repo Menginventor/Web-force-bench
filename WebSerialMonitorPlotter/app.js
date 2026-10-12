@@ -1229,7 +1229,7 @@ class SerialMonitorApp {
       top: 25,
       right: isSplitY ? 65 : 25,
       bottom: 35,
-      left: 60
+      left: 65
     };
     const plotW = width - padding.left - padding.right;
     const plotH = height - padding.top - padding.bottom;
@@ -1302,13 +1302,13 @@ class SerialMonitorApp {
         ctx.fillStyle = color1;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
-        ctx.fillText(val1.toFixed(1), padding.left - 8, yPos);
+        ctx.fillText(val1.toFixed(2), padding.left - 8, yPos);
 
         // Right Y-Axis Label (Value 2 / Channel 2)
         const val2 = max2 - ratio * range2;
         ctx.fillStyle = color2;
         ctx.textAlign = 'left';
-        ctx.fillText(val2.toFixed(1), padding.left + plotW + 8, yPos);
+        ctx.fillText(val2.toFixed(2), padding.left + plotW + 8, yPos);
       }
 
       // Vertical Grid Lines
@@ -1456,7 +1456,7 @@ class SerialMonitorApp {
         ctx.lineTo(padding.left + plotW, yPos);
         ctx.stroke();
 
-        ctx.fillText(yVal.toFixed(1), padding.left - 8, yPos);
+        ctx.fillText(yVal.toFixed(2), padding.left - 8, yPos);
       }
 
       // Draw Grid Lines (Vertical)
