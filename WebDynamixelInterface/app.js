@@ -20,6 +20,9 @@ class WebDynamixelApp {
     
     // Servo Controls State
     this.torqueEnabled = false;
+    this.currentOperatingMode = 3;
+    this.isSyncingStatus = false;
+    this.pollCycleCount = 0;
     this.ledEnabled = false;
     this.goalPosition = 2048; // Default center for P2.0 (0-4095)
     this.goalVelocity = 200;
@@ -103,8 +106,11 @@ class WebDynamixelApp {
       activeModeBadge: document.getElementById('activeModeBadge'),
       operatingModeSelect: document.getElementById('operatingModeSelect'),
       btnSetOperatingMode: document.getElementById('btnSetOperatingMode'),
+      btnReadOperatingMode: document.getElementById('btnReadOperatingMode'),
+      btnSyncStatus: document.getElementById('btnSyncStatus'),
       torqueAlertBanner: document.getElementById('torqueAlertBanner'),
       btnQuickArmTorque: document.getElementById('btnQuickArmTorque'),
+      btnReadTorque: document.getElementById('btnReadTorque'),
 
       // Dial & Horn
       rotarySvg: document.getElementById('rotarySvg'),
@@ -396,37 +402,13 @@ class WebDynamixelApp {
       // Launch non-blocking read stream
       this.readLoopPromise = this.readLoop();
 
-      // Start Telemetry Polling
-      this.updatePollingRate();
-
       this.logPacket("SYS", [], `Connected to serial port at ${baudRate} baud with Protocol ${this.protocolVersion}`);
 
-      // Query active actuator Operating Mode and Torque State from hardware
-      if (this.protocolVersion === "2.0") {
-        setTimeout(async () => {
-          try {
-            const modeBlock = await this.readMemoryBlock(11, 1);
-            if (modeBlock && modeBlock.params && modeBlock.params.length > 0) {
-              const currentMode = modeBlock.params[0];
-              this.currentOperatingMode = currentMode;
-              this.updateModeBadge(currentMode);
-              this.updateDynamicModePanels(currentMode);
-              this.logPacket("SYS", [], `Actuator Active ID ${this.activeId} initial Operating Mode: ${currentMode}`);
-            }
-            const torqueBlock = await this.readMemoryBlock(64, 1);
-            if (torqueBlock && torqueBlock.params && torqueBlock.params.length > 0) {
-              this.torqueEnabled = torqueBlock.params[0] === 1;
-              if (this.el.toggleTorque) this.el.toggleTorque.checked = this.torqueEnabled;
-              if (this.el.torqueStateLabel) {
-                this.el.torqueStateLabel.textContent = this.torqueEnabled ? "TORQUE ARMED" : "TORQUE DISABLED";
-                this.el.torqueStateLabel.style.color = this.torqueEnabled ? "var(--accent-emerald)" : "var(--accent-rose)";
-              }
-            }
-          } catch (e) {
-            console.warn("Could not query initial operating mode:", e);
-          }
-        }, 150);
-      }
+      // Query active actuator Operating Mode and Torque State directly from motor BEFORE starting telemetry polling!
+      await this.syncMotorStatus(true);
+
+      // Start Telemetry Polling after initial hardware status sync
+      this.updatePollingRate();
     } catch (err) {
       console.error("Connection failed:", err);
       alert(`Could not open port: ${err.message}`);
@@ -499,7 +481,17 @@ class WebDynamixelApp {
         }
       } catch (err) {
         if (this.keepReading) {
-          console.warn("Read stream error:", err);
+          console.warn("Read stream error (framing error / serial noise):", err);
+          this.logPacket("SYS", [], `[SERIAL] Framing/Read Error (${err.message || err}). Flushed buffer & resyncing stream...`);
+          // Clear any partial corrupt bytes so parser immediately recovers clean headers
+          this.rxBuffer = [];
+          if (this.activeReadResolver) {
+            const res = this.activeReadResolver;
+            this.activeReadResolver = null;
+            res.resolve(null);
+          }
+          // Small pause to let hardware UART line and FIFO settle
+          await new Promise(r => setTimeout(r, 40));
         }
       } finally {
         if (this.reader) {
@@ -517,6 +509,11 @@ class WebDynamixelApp {
       this.rxBuffer.push(bytes[i]);
     }
 
+    // Safety buffer limit: if noise accumulates without valid headers, prevent overflow
+    if (this.rxBuffer.length > 512) {
+      this.rxBuffer = this.rxBuffer.slice(-256);
+    }
+
     // Packet parsing for Protocol 1.0 or 2.0
     if (this.protocolVersion === "2.0") {
       this.parseProtocol2Stream();
@@ -530,7 +527,7 @@ class WebDynamixelApp {
   parseProtocol2Stream() {
     // Protocol 2.0 Header: 0xFF, 0xFF, 0xFD, 0x00
     while (this.rxBuffer.length >= 11) {
-      // Find header
+      // Find header: 0xFF, 0xFF, 0xFD, 0x00
       if (
         this.rxBuffer[0] !== 0xff ||
         this.rxBuffer[1] !== 0xff ||
@@ -545,18 +542,51 @@ class WebDynamixelApp {
       const length = this.rxBuffer[5] | (this.rxBuffer[6] << 8);
       const totalLen = 7 + length;
 
+      // Sanity check on packet length:
+      // In Protocol 2.0, a status packet length is at least 4 (Inst + Error + CRC)
+      // and for Dynamixel actuators it never exceeds 256.
+      if (length < 4 || length > 256) {
+        // Corrupted length from framing error or line noise: drop the false header byte and resync!
+        this.rxBuffer.shift();
+        continue;
+      }
+
       if (this.rxBuffer.length < totalLen) {
+        // Look ahead in rxBuffer: if another valid 0xFF, 0xFF, 0xFD, 0x00 header appears
+        // before totalLen, the current header had a bogus length or was false!
+        let nextHeaderIdx = -1;
+        for (let i = 1; i <= this.rxBuffer.length - 4; i++) {
+          if (
+            this.rxBuffer[i] === 0xff &&
+            this.rxBuffer[i + 1] === 0xff &&
+            this.rxBuffer[i + 2] === 0xfd &&
+            this.rxBuffer[i + 3] === 0x00
+          ) {
+            nextHeaderIdx = i;
+            break;
+          }
+        }
+        if (nextHeaderIdx !== -1 && nextHeaderIdx < totalLen) {
+          this.rxBuffer.splice(0, nextHeaderIdx);
+          continue;
+        }
         return; // Wait for full packet
       }
 
-      const packetBytes = this.rxBuffer.splice(0, totalLen);
+      // Peek packet and verify CRC BEFORE slicing out of rxBuffer
+      const packetBytes = this.rxBuffer.slice(0, totalLen);
       const crcExpected = packetBytes[totalLen - 2] | (packetBytes[totalLen - 1] << 8);
       const crcActual = DXL.calculateCRC2(packetBytes, totalLen - 2);
 
       if (crcActual !== crcExpected) {
         this.logPacket("RX", packetBytes, `ID ${id} CRC MISMATCH (Exp: ${crcExpected.toString(16)}, Act: ${crcActual.toString(16)})`);
+        // CRC failed: discard only the false header byte so subsequent bytes can be parsed
+        this.rxBuffer.shift();
         continue;
       }
+
+      // Valid packet! Consume it from the buffer
+      this.rxBuffer.splice(0, totalLen);
 
       const instruction = packetBytes[7];
       const errorByte = packetBytes[8];
@@ -579,18 +609,39 @@ class WebDynamixelApp {
       const length = this.rxBuffer[3];
       const totalLen = 4 + length;
 
+      // In Protocol 1.0, length must be at least 2 (Error + Checksum) and at most 143
+      if (length < 2 || length > 143) {
+        this.rxBuffer.shift();
+        continue;
+      }
+
       if (this.rxBuffer.length < totalLen) {
+        // Look ahead for another 0xFF, 0xFF header before totalLen
+        let nextHeaderIdx = -1;
+        for (let i = 1; i <= this.rxBuffer.length - 2; i++) {
+          if (this.rxBuffer[i] === 0xff && this.rxBuffer[i + 1] === 0xff) {
+            nextHeaderIdx = i;
+            break;
+          }
+        }
+        if (nextHeaderIdx !== -1 && nextHeaderIdx < totalLen) {
+          this.rxBuffer.splice(0, nextHeaderIdx);
+          continue;
+        }
         return; // Wait for full packet
       }
 
-      const packetBytes = this.rxBuffer.splice(0, totalLen);
+      const packetBytes = this.rxBuffer.slice(0, totalLen);
       const checksumActual = packetBytes[totalLen - 1];
       const checksumCalculated = DXL.calculateChecksum1(packetBytes.slice(0, totalLen - 1));
 
       if (checksumActual !== checksumCalculated) {
         this.logPacket("RX", packetBytes, `ID ${id} CHECKSUM MISMATCH`);
+        this.rxBuffer.shift();
         continue;
       }
+
+      this.rxBuffer.splice(0, totalLen);
 
       const errorByte = packetBytes[4];
       const params = packetBytes.slice(5, totalLen - 1);
@@ -616,10 +667,12 @@ class WebDynamixelApp {
   processStatusPacket(id, instruction, errorByte, params) {
     // Check if an explicit memory block read is waiting for this response
     if (this.activeReadResolver && id === this.activeId) {
-      const res = this.activeReadResolver;
-      this.activeReadResolver = null;
-      res.resolve({ addr: res.addr, error: errorByte, params });
-      return;
+      if (params.length === this.activeReadResolver.length) {
+        const res = this.activeReadResolver;
+        this.activeReadResolver = null;
+        res.resolve({ addr: res.addr, error: errorByte, params });
+        return;
+      }
     }
 
     // Notify any pending resolver (e.g. Ping or Bus Scan)
@@ -851,50 +904,113 @@ class WebDynamixelApp {
     });
   }
 
-  selectActiveServo(id) {
+  async selectActiveServo(id) {
     this.activeId = id;
     const servo = this.discoveredServos.get(id);
     this.el.activeIdDisplay.textContent = id;
     this.el.activeModelDisplay.textContent = servo ? servo.model : "Generic DXL";
     this.renderDiscoveredList();
-    this.queryServoState();
 
-    if (this.protocolVersion === "2.0") {
-      setTimeout(async () => {
-        try {
-          const modeBlock = await this.readMemoryBlock(11, 1);
-          if (modeBlock && modeBlock.params && modeBlock.params.length > 0) {
-            const currentMode = modeBlock.params[0];
-            this.currentOperatingMode = currentMode;
-            this.updateModeBadge(currentMode);
-            this.updateDynamicModePanels(currentMode);
-          }
-          const torqueBlock = await this.readMemoryBlock(64, 1);
-          if (torqueBlock && torqueBlock.params && torqueBlock.params.length > 0) {
-            this.torqueEnabled = torqueBlock.params[0] === 1;
-            if (this.el.toggleTorque) this.el.toggleTorque.checked = this.torqueEnabled;
-            if (this.el.torqueStateLabel) {
-              this.el.torqueStateLabel.textContent = this.torqueEnabled ? "Motor Armed (Torque ON)" : "Motor Free (Torque OFF)";
-            }
-            if (this.el.torqueAlertBanner) {
-              this.el.torqueAlertBanner.style.display = this.torqueEnabled ? "none" : "flex";
-            }
-          }
-        } catch (e) {}
-      }, 50);
-    }
+    // Query operating mode and torque state directly from newly selected servo
+    await this.syncMotorStatus(true);
+    this.queryServoState();
   }
 
   // --------------------------------------------------------------------------
   // Actuator Control Operations
   // --------------------------------------------------------------------------
-  async setTorque(enable) {
-    this.torqueEnabled = enable;
-    if (this.el.toggleTorque) this.el.toggleTorque.checked = enable;
-    this.el.torqueStateLabel.textContent = enable ? "Motor Armed (Torque ON)" : "Motor Free (Torque OFF)";
-    if (this.el.torqueAlertBanner) {
-      this.el.torqueAlertBanner.style.display = enable ? "none" : "flex";
+  updateTorqueUI(isArmed) {
+    this.torqueEnabled = isArmed;
+    if (this.el.toggleTorque) this.el.toggleTorque.checked = isArmed;
+    if (this.el.torqueStateLabel) {
+      this.el.torqueStateLabel.textContent = isArmed ? "Motor Armed (Torque ON)" : "Motor Free (Torque OFF)";
+      this.el.torqueStateLabel.style.color = isArmed ? "var(--accent-emerald)" : "var(--accent-rose)";
     }
+    if (this.el.torqueAlertBanner) {
+      this.el.torqueAlertBanner.style.display = isArmed ? "none" : "flex";
+    }
+  }
+
+  async syncMotorTorque(notify = false) {
+    if (!this.isConnected || this.activeReadResolver) return;
+    try {
+      const addr = this.protocolVersion === "2.0" ? 64 : 24;
+      const res = await this.readMemoryBlock(addr, 1);
+      if (res && res.params && res.params.length >= 1) {
+        const isArmed = res.params[0] === 1;
+        const stateChanged = (this.torqueEnabled !== isArmed);
+        this.updateTorqueUI(isArmed);
+        if (stateChanged || notify) {
+          this.logPacket("SYS", [], `Actuator ID ${this.activeId} Torque State from motor: ${isArmed ? "ARMED (ON)" : "FREE (OFF)"}`);
+        }
+      }
+    } catch (e) {
+      console.warn("syncMotorTorque error:", e);
+    }
+  }
+
+  async syncOperatingMode(notify = true) {
+    if (!this.isConnected || this.activeReadResolver) return;
+    try {
+      if (this.protocolVersion === "2.0") {
+        const res = await this.readMemoryBlock(11, 1);
+        if (res && res.params && res.params.length >= 1) {
+          const modeVal = res.params[0];
+          this.currentOperatingMode = modeVal;
+          this.updateModeBadge(modeVal);
+          this.updateDynamicModePanels(modeVal);
+          if (notify) this.logPacket("SYS", [], `Actuator ID ${this.activeId} Operating Mode from motor: Mode ${modeVal}`);
+        }
+      } else {
+        // Protocol 1.0 (AX/MX): CW (6) & CCW (8) limits determine Wheel vs Joint mode
+        const res = await this.readMemoryBlock(6, 4);
+        if (res && res.params && res.params.length >= 4) {
+          const cw = res.params[0] | (res.params[1] << 8);
+          const ccw = res.params[2] | (res.params[3] << 8);
+          const isWheel = (cw === 0 && ccw === 0);
+          const modeVal = isWheel ? 1 : 3;
+          this.currentOperatingMode = modeVal;
+          this.updateModeBadge(modeVal);
+          this.updateDynamicModePanels(modeVal);
+          if (notify) this.logPacket("SYS", [], `Actuator ID ${this.activeId} Mode from motor: ${isWheel ? "Wheel (1)" : "Joint (3)"}`);
+        }
+      }
+    } catch (e) {
+      console.warn("syncOperatingMode error:", e);
+    }
+  }
+
+  async syncMotorStatus(notify = true) {
+    if (!this.isConnected) return;
+    this.isSyncingStatus = true;
+    if (this.el.btnSyncStatus) this.el.btnSyncStatus.classList.add("spinning");
+    try {
+      await this.syncOperatingMode(notify);
+      await new Promise(r => setTimeout(r, 25));
+      await this.syncMotorTorque(notify);
+      await new Promise(r => setTimeout(r, 25));
+      if (this.protocolVersion === "2.0") {
+        const errBlock = await this.readMemoryBlock(70, 1);
+        if (errBlock && errBlock.params && errBlock.params.length >= 1) {
+          const errByte = errBlock.params[0];
+          this.hardwareError = errByte;
+          this.el.hudErrorVal.textContent = errByte === 0 ? "NORMAL" : `ERR: 0x${errByte.toString(16).toUpperCase()}`;
+          this.el.hudErrorVal.style.color = errByte === 0 ? "var(--accent-emerald)" : "var(--accent-rose)";
+        }
+      }
+      if (notify) {
+        this.logPacket("SYS", [], `✓ Synced with Motor ID ${this.activeId}: Mode=${this.currentOperatingMode}, Torque=${this.torqueEnabled ? "ON" : "OFF"}`);
+      }
+    } catch (err) {
+      console.warn("syncMotorStatus error:", err);
+    } finally {
+      this.isSyncingStatus = false;
+      if (this.el.btnSyncStatus) this.el.btnSyncStatus.classList.remove("spinning");
+    }
+  }
+
+  async setTorque(enable) {
+    this.updateTorqueUI(enable);
 
     const addr = this.protocolVersion === "2.0" ? 64 : 24;
     const packet = this.protocolVersion === "2.0"
@@ -908,6 +1024,9 @@ class WebDynamixelApp {
       const limitPkt = DXL.buildPacketP1(this.activeId, DXL.INST.WRITE, [34, 0xff, 0x03]); // 1023
       await this.sendPacket(limitPkt, `TORQUE LIMIT = 1023 (ID ${this.activeId})`);
     }
+
+    // Verify torque state from motor hardware after writing
+    setTimeout(() => this.syncMotorTorque(false), 50);
   }
 
   async setOperatingMode(mode) {
@@ -1047,6 +1166,64 @@ class WebDynamixelApp {
     await this.sendPacket(packet, `MULTITURN GOAL = ${turns.toFixed(2)} Revs (${ticks} ticks) (ID ${this.activeId})`);
   }
 
+  async resetMultiturnEncoder() {
+    if (!this.isConnected) {
+      alert("Please connect hardware first.");
+      return;
+    }
+
+    if (this.protocolVersion !== "2.0") {
+      alert("Multi-turn encoder clear is supported on Protocol 2.0 actuators.");
+      return;
+    }
+
+    this.isSyncingStatus = true;
+    this.logPacket("SYS", [], `[ENCODER RESET] Resetting Multi-turn Revolution Information on Actuator ID ${this.activeId}...`);
+
+    try {
+      // 1. Remember whether torque was armed
+      const prevTorque = this.torqueEnabled;
+
+      // 2. Robotis Protocol 2.0 Rule: Torque must be disabled to execute Clear (0x10) instruction
+      if (prevTorque) {
+        this.logPacket("SYS", [], `Temporarily disabling torque to clear multi-turn encoder...`);
+        await this.setTorque(false);
+        await new Promise(r => setTimeout(r, 40));
+      }
+
+      // 3. Send Clear Instruction (0x10) with multi-turn reset parameters: [0x01, 0x44, 0x58, 0x4C, 0x22]
+      // P1 = 0x01 (Reset Multi-turn Information)
+      // P2..P5 = 0x44, 0x58, 0x4C, 0x22 ("DXL\"")
+      const clearParams = [0x01, 0x44, 0x58, 0x4C, 0x22];
+      const clearPacket = DXL.buildPacketP2(this.activeId, DXL.INST.CLEAR, clearParams);
+      await this.sendPacket(clearPacket, `CLEAR MULTI-TURN ENCODER (ID ${this.activeId})`);
+
+      await new Promise(r => setTimeout(r, 60));
+
+      // 4. Re-enable torque if it was originally armed
+      if (prevTorque) {
+        await this.setTorque(true);
+        await new Promise(r => setTimeout(r, 40));
+      }
+
+      // 5. Reset UI input targets
+      this.multiturnGoalTurns = 0.0;
+      this.goalPosition = (this.presentPosition || 0) % 4096;
+      if (this.el.inputLiveTurns) this.el.inputLiveTurns.value = "0.0";
+      if (this.el.testTurnsInput) this.el.testTurnsInput.value = "0.0";
+
+      // 6. Query fresh position from motor
+      await this.queryServoState();
+
+      this.logPacket("SYS", [], `✓ Multi-turn encoder successfully reset to 0 on Actuator ID ${this.activeId}`);
+    } catch (err) {
+      console.error("Error resetting multi-turn encoder:", err);
+      this.logPacket("SYS", [], `Failed to reset multi-turn encoder: ${err.message || err}`);
+    } finally {
+      this.isSyncingStatus = false;
+    }
+  }
+
   async readMemoryBlock(addr, length) {
     if (!this.isConnected) return null;
     let packet;
@@ -1062,11 +1239,11 @@ class WebDynamixelApp {
     return new Promise(async resolve => {
       this.activeReadResolver = { addr, length, resolve };
       const timeout = setTimeout(() => {
-        if (this.activeReadResolver) {
+        if (this.activeReadResolver && this.activeReadResolver.resolve === resolve) {
           this.activeReadResolver = null;
           resolve(null);
         }
-      }, 220);
+      }, 250);
 
       await this.sendPacket(packet, `READ ADDR ${addr} LEN ${length} (ID ${this.activeId})`);
     });
@@ -1439,8 +1616,15 @@ class WebDynamixelApp {
   }
 
   async queryServoState() {
+    if (this.isPollingBusy || this.activeReadResolver || this.isSyncingStatus) return;
     this.isPollingBusy = true;
     try {
+      this.pollCycleCount = (this.pollCycleCount || 0) + 1;
+      // Periodic background check of Torque State every ~25 poll cycles
+      if (this.pollCycleCount % 25 === 0) {
+        await this.syncMotorTorque(false);
+        return;
+      }
       if (this.protocolVersion === "2.0") {
         // Read 8 bytes starting from Present Velocity (128):
         // 128..131: Present Velocity (4 bytes signed int32)
@@ -1978,11 +2162,26 @@ class WebDynamixelApp {
       }
     });
 
-    // Operating Mode & Quick Arm
+    // Operating Mode & Quick Arm & Sync
     if (this.el.btnSetOperatingMode) {
       this.el.btnSetOperatingMode.addEventListener("click", () => {
         const mode = this.el.operatingModeSelect.value;
         this.setOperatingMode(mode);
+      });
+    }
+    if (this.el.btnReadOperatingMode) {
+      this.el.btnReadOperatingMode.addEventListener("click", () => {
+        this.syncOperatingMode(true);
+      });
+    }
+    if (this.el.btnReadTorque) {
+      this.el.btnReadTorque.addEventListener("click", () => {
+        this.syncMotorTorque(true);
+      });
+    }
+    if (this.el.btnSyncStatus) {
+      this.el.btnSyncStatus.addEventListener("click", () => {
+        this.syncMotorStatus(true);
       });
     }
     if (this.el.btnQuickArmTorque) {
@@ -2195,16 +2394,24 @@ class WebDynamixelApp {
 
     if (this.el.btnZeroLiveTurns) {
       this.el.btnZeroLiveTurns.addEventListener("click", () => {
-        if (this.el.inputLiveTurns) this.el.inputLiveTurns.value = 0;
-        this.setMultiturnRevolutions(0);
+        this.resetMultiturnEncoder();
       });
     }
 
     document.querySelectorAll("[data-live-turn]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const turn = parseFloat(btn.dataset.liveTurn);
-        if (this.el.inputLiveTurns) this.el.inputLiveTurns.value = turn;
-        this.setMultiturnRevolutions(turn);
+        const delta = parseFloat(btn.dataset.liveTurn);
+        if (isNaN(delta)) return;
+
+        let baseTurns = (this.presentPosition || 0) / 4096.0;
+        const roundedInt = Math.round(baseTurns);
+        if (Math.abs(baseTurns - roundedInt) < 0.02) {
+          baseTurns = roundedInt;
+        }
+
+        const targetTurns = parseFloat((baseTurns + delta).toFixed(2));
+        if (this.el.inputLiveTurns) this.el.inputLiveTurns.value = targetTurns;
+        this.setMultiturnRevolutions(targetTurns);
       });
     });
 
@@ -2265,14 +2472,28 @@ class WebDynamixelApp {
 
     document.querySelectorAll("[data-turn]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const turn = parseFloat(btn.dataset.turn);
+        const val = parseFloat(btn.dataset.turn);
+        if (isNaN(val)) return;
+
+        let targetTurns;
+        if (val === 0) {
+          targetTurns = 0;
+        } else {
+          let baseTurns = (this.presentPosition || 0) / 4096.0;
+          const roundedInt = Math.round(baseTurns);
+          if (Math.abs(baseTurns - roundedInt) < 0.02) {
+            baseTurns = roundedInt;
+          }
+          targetTurns = parseFloat((baseTurns + val).toFixed(2));
+        }
+
         if (this.el.testTurnsInput) {
-          this.el.testTurnsInput.value = turn;
+          this.el.testTurnsInput.value = targetTurns;
           if (this.el.testTurnsTicksReadout) {
-            this.el.testTurnsTicksReadout.value = `${Math.round(turn * 4096)} ticks`;
+            this.el.testTurnsTicksReadout.value = `${Math.round(targetTurns * 4096)} ticks`;
           }
         }
-        this.setMultiturnRevolutions(turn);
+        this.setMultiturnRevolutions(targetTurns);
       });
     });
 

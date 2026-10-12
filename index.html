@@ -87,8 +87,41 @@
       margin-top: 12px;
     }
 
+    .card-featured {
+      grid-column: 1 / -1;
+      border-color: rgba(56, 189, 248, 0.4);
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.75) 100%);
+      box-shadow: 0 10px 30px -10px rgba(56, 189, 248, 0.2);
+    }
+
+    .card-featured:hover {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 20px 45px -10px rgba(56, 189, 248, 0.4);
+    }
+
+    .card-unified {
+      --card-accent: #38bdf8;
+      --card-glow: rgba(56, 189, 248, 0.35);
+    }
+
+    .featured-badge {
+      position: absolute;
+      top: 18px;
+      right: 20px;
+      padding: 4px 10px;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #38bdf8;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
     @media (max-width: 768px) {
       .grid { grid-template-columns: 1fr; }
+      .card-featured { grid-column: 1; }
       h1 { font-size: 2rem; }
     }
 
@@ -213,6 +246,36 @@
     </div>
 
     <div class="grid">
+      <!-- Card Unified: Unified Force Bench -->
+      <a href="UnifiedForceBench/" class="hub-card card-featured card-unified">
+        <span class="featured-badge">★ Dual-Device Hub</span>
+        <div class="card-icon" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.3);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+            <path d="M7 8h10M7 12h5"></path>
+          </svg>
+        </div>
+        <div class="card-title" style="font-size: 1.5rem;">Unified Force-Bench Station (U2D2 + Arduino)</div>
+        <div class="card-desc">
+          Complete integrated workbench for mechanical testing. Controls Robotis Dynamixel via U2D2 on lead screw (1 rev/mm) with selectable mm/s step jogging and continuous motion, synchronized with Arduino telemetry (load cell force & heated chamber temperature). Features 3 real-time subplots (Temp, Force, Push/Pull curve) and automated test routine execution.
+        </div>
+        <div class="tag-list">
+          <span class="tag" style="color: var(--accent-cyan);">Dual Web Serial</span>
+          <span class="tag">1 rev / mm Lead Screw</span>
+          <span class="tag">Fixed mm/s Jogging</span>
+          <span class="tag">Fast Forward / Rewind</span>
+          <span class="tag">3x Subplots (Temp, Force, Push/Pull)</span>
+          <span class="tag">Encoder Zero Reset</span>
+          <span class="tag">CSV Data Export</span>
+        </div>
+        <div class="card-action" style="font-size: 0.95rem;">
+          <span>Launch Unified Force-Bench Station</span>
+          <span>→</span>
+        </div>
+      </a>
+
       <!-- Card 1: WebSerialMonitorPlotter -->
       <a href="WebSerialMonitorPlotter/" class="hub-card card-1">
         <div class="card-icon">
