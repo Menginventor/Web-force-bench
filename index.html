@@ -288,6 +288,23 @@
                 <span id="latestValuesBadge" class="meta-badge-values">--</span>
               </div>
               <div class="plotter-controls">
+                <label class="toggle-control" id="splitYAxisWrapper" title="Split Y-Axis: Available only when exactly 2 signals are selected">
+                  <input type="checkbox" id="splitYAxisCheck" disabled>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label" id="splitYAxisLabel">Split Y-Axis (2 Ch)</span>
+                </label>
+                <button id="btnRecordCsv" class="btn btn-sm btn-outline btn-record-csv" title="Start/Stop recording live plot data to CSV">
+                  <span class="rec-dot"></span>
+                  <span id="btnRecordCsvText">Record CSV</span>
+                </button>
+                <button id="btnExportPlotCsv" class="btn btn-sm btn-outline" title="Export current buffered plot points as CSV">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                  <span>Export CSV</span>
+                </button>
                 <label class="toggle-control">
                   <input type="checkbox" id="pausePlotCheck">
                   <span class="toggle-slider"></span>

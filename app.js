@@ -68,11 +68,22 @@ class SerialMonitorApp {
     // Incoming line buffer for clean newline-delimited stream decoding
     this.incomingBuffer = '';
 
-    // Plotter data buffers: Map of channelIndex -> Array of numbers
+    // Plotter data buffers: Map of channelKey -> Array of numbers
+    this.channelOrder = [];
     this.channelData = new Map();
     this.channelNames = new Map();
+    this.channelColors = new Map();
+    this.customChannelNames = new Set();
+    this.channelVisibility = new Map();
+    this.latestChannelValues = new Map();
     this.maxPlotWindow = 100;
     this.isPlotPaused = false;
+
+    // Split Y-Axis (Dual Axis) & CSV Recording State
+    this.isSplitYAxis = false;
+    this.isRecordingCsv = false;
+    this.csvRecordedRows = [];
+    this.csvRecordingStartTime = null;
 
     // Initialize UI and listeners
     this.initElements();
@@ -134,6 +145,14 @@ class SerialMonitorApp {
     this.channelCountBadge = document.getElementById('channelCountBadge');
     this.latestValuesBadge = document.getElementById('latestValuesBadge');
     this.plotChannelsLegend = document.getElementById('plotChannelsLegend');
+
+    // Split Y-Axis & CSV Recording Controls
+    this.splitYAxisWrapper = document.getElementById('splitYAxisWrapper');
+    this.splitYAxisCheck = document.getElementById('splitYAxisCheck');
+    this.splitYAxisLabel = document.getElementById('splitYAxisLabel');
+    this.btnRecordCsv = document.getElementById('btnRecordCsv');
+    this.btnRecordCsvText = document.getElementById('btnRecordCsvText');
+    this.btnExportPlotCsv = document.getElementById('btnExportPlotCsv');
 
     // View Tabs
     this.viewsWrapper = document.getElementById('viewsWrapper');
@@ -240,7 +259,7 @@ class SerialMonitorApp {
       if (preset === 'numbers') {
         this.customRegexInput.value = '[-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?';
       } else if (preset === 'keyvalue') {
-        this.customRegexInput.value = '(?:[a-zA-Z0-9_-]+)\\s*[:=]\\s*([-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?)';
+        this.customRegexInput.value = '([a-zA-Z0-9_\\-\\.]+)\\s*[:=]\\s*([-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?)';
       }
     });
 
@@ -254,13 +273,32 @@ class SerialMonitorApp {
       this.isPlotPaused = this.pausePlotCheck.checked;
     });
 
-    // Clear plot
+    // Clear plot - clears data points while preserving channel names and visibility ("keep the label")
     this.btnClearPlot.addEventListener('click', () => {
-      this.channelData.clear();
-      this.channelNames.clear();
+      this.channelData.forEach(series => {
+        series.length = 0;
+      });
+      this.latestChannelValues.clear();
       this.plotPoints = 0;
-      this.updateLegend();
       this.updateStats();
+      this.updateLegend();
+      this.updateLatestValuesDisplay();
+      this.updateSplitYAxisAvailability();
+    });
+
+    // Split Y-Axis Toggle (Dual Y-Axis for 2 selected signals)
+    this.splitYAxisCheck.addEventListener('change', () => {
+      this.isSplitYAxis = this.splitYAxisCheck.checked;
+    });
+
+    // Record live CSV toggle
+    this.btnRecordCsv.addEventListener('click', () => {
+      this.toggleCsvRecording();
+    });
+
+    // Export current plot buffers as CSV
+    this.btnExportPlotCsv.addEventListener('click', () => {
+      this.exportCurrentPlotCsv();
     });
 
     // View tab switching
@@ -613,69 +651,458 @@ class SerialMonitorApp {
     }
   }
 
-  parseLineForPlotter(line) {
-    let regex;
-    try {
-      regex = new RegExp(this.customRegexInput.value, 'g');
-    } catch (e) {
-      regex = /[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/g;
+  getChannelColor(key) {
+    if (this.channelColors.has(key)) {
+      return this.channelColors.get(key);
+    }
+    const idx = this.channelOrder.indexOf(key);
+    const colorIndex = (idx >= 0 ? idx : this.channelColors.size) % CHANNEL_COLORS.length;
+    const color = CHANNEL_COLORS[colorIndex];
+    this.channelColors.set(key, color);
+    return color;
+  }
+
+  resolveChannelKey(rawLabel) {
+    if (!rawLabel) return null;
+    const label = rawLabel.trim();
+    if (!label) return null;
+    const lowerLabel = label.toLowerCase();
+
+    // 1. Exact match with existing channel keys
+    for (const key of this.channelOrder) {
+      if (key.toLowerCase() === lowerLabel) return key;
     }
 
-    const matches = [];
-    let match;
+    // 2. Exact match with display names
+    for (const [key, name] of this.channelNames.entries()) {
+      if (name.toLowerCase() === lowerLabel) return key;
+    }
 
-    // Check if regex has capture groups (like key-value regex)
-    while ((match = regex.exec(line)) !== null) {
-      // Use first capture group if exists, else full match
-      const valStr = match[1] !== undefined ? match[1] : match[0];
-      const num = parseFloat(valStr);
-      if (!isNaN(num) && isFinite(num)) {
-        matches.push(num);
+    // 3. Strip trailing filler like 'set to', 'is', 'value'
+    // e.g. "PWM set to" -> "PWM"
+    const cleaned = label.replace(/\s+(?:set\s+to|is|val|value)$/i, '').trim();
+    if (cleaned && cleaned.toLowerCase() !== lowerLabel) {
+      for (const key of this.channelOrder) {
+        if (key.toLowerCase() === cleaned.toLowerCase()) return key;
       }
     }
 
-    if (matches.length > 0) {
-      this.plotPoints += matches.length;
-      let hasNewChannel = false;
+    // 4. Prefix match with word boundary (e.g. "PWM set to" starts with "PWM")
+    for (const key of this.channelOrder) {
+      const lowerKey = key.toLowerCase();
+      if (lowerLabel.startsWith(lowerKey + ' ') || lowerLabel.startsWith(lowerKey + ':') || lowerLabel.startsWith(lowerKey + '_')) {
+        return key;
+      }
+    }
 
-      matches.forEach((val, index) => {
-        if (!this.channelData.has(index)) {
-          this.channelData.set(index, []);
-          this.channelNames.set(index, `CH${index + 1}`);
-          hasNewChannel = true;
+    return cleaned || label;
+  }
+
+  getOrCreateChannel(key, displayName) {
+    if (!this.channelData.has(key)) {
+      this.channelOrder.push(key);
+      this.channelData.set(key, []);
+      this.channelNames.set(key, displayName || key);
+      this.channelVisibility.set(key, true);
+      this.getChannelColor(key);
+      return true;
+    }
+    return false;
+  }
+
+  isChannelVisible(key) {
+    return this.channelVisibility.get(key) !== false;
+  }
+
+  toggleChannelVisibility(key) {
+    const nextState = !this.isChannelVisible(key);
+    this.channelVisibility.set(key, nextState);
+    this.updateLegend();
+    this.updateLatestValuesDisplay();
+    this.updateSplitYAxisAvailability();
+  }
+
+  setAllChannelsVisibility(visible) {
+    this.channelOrder.forEach(key => {
+      this.channelVisibility.set(key, visible);
+    });
+    this.updateLegend();
+    this.updateLatestValuesDisplay();
+    this.updateSplitYAxisAvailability();
+  }
+
+  updateSplitYAxisAvailability() {
+    if (!this.splitYAxisCheck || !this.splitYAxisWrapper) return;
+    const visibleKeys = this.channelOrder.filter(key => this.isChannelVisible(key));
+    const isAvailable = (visibleKeys.length === 2);
+
+    if (isAvailable) {
+      this.splitYAxisCheck.disabled = false;
+      this.splitYAxisWrapper.classList.remove('disabled');
+      const name1 = this.channelNames.get(visibleKeys[0]) || visibleKeys[0];
+      const name2 = this.channelNames.get(visibleKeys[1]) || visibleKeys[1];
+      this.splitYAxisLabel.textContent = 'Split Y-Axis (2 Ch)';
+      this.splitYAxisWrapper.title = `Split Y-Axis active: Left axis = ${name1}, Right axis = ${name2}`;
+    } else {
+      this.splitYAxisCheck.disabled = true;
+      this.splitYAxisWrapper.classList.add('disabled');
+      this.splitYAxisLabel.textContent = `Split Y-Axis (${visibleKeys.length}/2)`;
+      this.splitYAxisWrapper.title = `Split Y-Axis requires exactly 2 signals selected (currently ${visibleKeys.length} active)`;
+    }
+  }
+
+  toggleCsvRecording() {
+    if (!this.isRecordingCsv) {
+      this.startCsvRecording();
+    } else {
+      this.stopCsvRecording();
+    }
+  }
+
+  startCsvRecording() {
+    this.isRecordingCsv = true;
+    this.csvRecordedRows = [];
+    this.csvRecordingStartTime = Date.now();
+    this.btnRecordCsv.classList.add('recording');
+    this.btnRecordCsvText.textContent = 'Stop (0 rec)';
+    this.logSystem('Live CSV recording of plotter data started...');
+  }
+
+  stopCsvRecording() {
+    if (!this.isRecordingCsv) return;
+    this.isRecordingCsv = false;
+    this.btnRecordCsv.classList.remove('recording');
+    this.btnRecordCsvText.textContent = 'Record CSV';
+
+    const rowCount = this.csvRecordedRows.length;
+    if (rowCount === 0) {
+      this.logSystem('CSV recording stopped (no data rows recorded).');
+      return;
+    }
+
+    const channelHeaders = this.channelOrder.map(key => {
+      const name = this.channelNames.get(key) || key;
+      return `"${name.replace(/"/g, '""')}"`;
+    });
+
+    const headers = ['Timestamp_ms', 'Elapsed_sec', 'ISO_Time', ...channelHeaders].join(',');
+    const rows = [headers];
+
+    this.csvRecordedRows.forEach(row => {
+      const lineVals = [
+        row.timeMs,
+        row.elapsedSec,
+        `"${row.isoTime}"`
+      ];
+      this.channelOrder.forEach(key => {
+        const val = row.values.get(key);
+        lineVals.push(val !== undefined && val !== null ? val : '');
+      });
+      rows.push(lineVals.join(','));
+    });
+
+    const csvContent = rows.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const timestampStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+    a.href = url;
+    a.download = `plot-recording-${timestampStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    this.logSystem(`CSV recording saved: ${rowCount} rows downloaded to plot-recording-${timestampStr}.csv`);
+  }
+
+  exportCurrentPlotCsv() {
+    if (this.channelOrder.length === 0) {
+      this.logError('Cannot export CSV: no channel data in plot buffers.');
+      return;
+    }
+
+    const channelHeaders = this.channelOrder.map(key => {
+      const name = this.channelNames.get(key) || key;
+      return `"${name.replace(/"/g, '""')}"`;
+    });
+
+    let maxLen = 0;
+    this.channelOrder.forEach(key => {
+      const s = this.channelData.get(key);
+      if (s && s.length > maxLen) maxLen = s.length;
+    });
+
+    if (maxLen === 0) {
+      this.logError('Plot buffers are currently empty.');
+      return;
+    }
+
+    const headers = ['Sample_Index', ...channelHeaders].join(',');
+    const rows = [headers];
+
+    for (let i = 0; i < maxLen; i++) {
+      const lineVals = [i + 1];
+      this.channelOrder.forEach(key => {
+        const s = this.channelData.get(key);
+        const offset = maxLen - s.length;
+        const valIndex = i - offset;
+        const val = (valIndex >= 0 && valIndex < s.length) ? s[valIndex] : '';
+        lineVals.push(val);
+      });
+      rows.push(lineVals.join(','));
+    }
+
+    const csvContent = rows.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const timestampStr = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+    a.href = url;
+    a.download = `plot-buffer-${timestampStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    this.logSystem(`Exported ${maxLen} buffered points across ${this.channelOrder.length} channel(s) to CSV.`);
+  }
+
+  updateLatestValuesDisplay() {
+    if (this.channelOrder.length === 0) {
+      this.channelCountBadge.textContent = '0';
+      this.latestValuesBadge.textContent = '--';
+      return;
+    }
+
+    let visibleCount = 0;
+    const items = [];
+    this.channelOrder.forEach(key => {
+      const isVisible = this.isChannelVisible(key);
+      if (isVisible) visibleCount++;
+      const name = this.channelNames.get(key) || key;
+      const color = this.getChannelColor(key);
+      const val = this.latestChannelValues.has(key) ? this.latestChannelValues.get(key) : '--';
+
+      if (isVisible) {
+        items.push(`<span class="latest-val-item" style="color: ${color}"><span class="val-name">${name}:</span> ${val}</span>`);
+      } else {
+        items.push(`<span class="latest-val-item is-hidden" style="color: var(--text-dim)" title="Channel hidden on plot (click legend label to show)"><span class="val-name">${name}:</span> ${val} <span class="val-tag">(hidden)</span></span>`);
+      }
+    });
+
+    this.channelCountBadge.textContent = `${visibleCount}/${this.channelOrder.length}`;
+    this.channelCountBadge.title = `${visibleCount} active of ${this.channelOrder.length} channels`;
+    this.latestValuesBadge.innerHTML = items.join('<span class="meta-separator">|</span>');
+  }
+
+  updateLegendValuesOnly() {
+    this.channelOrder.forEach(key => {
+      if (!this.isChannelVisible(key)) return;
+      const chip = this.plotChannelsLegend.querySelector(`[data-channel="${CSS.escape(key)}"]`);
+      if (chip) {
+        const valBadge = chip.querySelector('.legend-val-badge');
+        if (valBadge && this.latestChannelValues.has(key)) {
+          valBadge.textContent = this.latestChannelValues.get(key);
         }
-        const series = this.channelData.get(index);
-        series.push(val);
+      }
+    });
+  }
 
-        // Keep buffer trimmed to window size
+  parseLineForPlotter(line) {
+    const pairs = [];
+
+    // 1. Extract labeled pairs (label)[:=](value)
+    // Matches labels before colons/equals, e.g. "Temperature: 25.40", "[MANUAL] PWM set to: 64"
+    const labeledRegex = /([a-zA-Z0-9_\-\.\s]+?)\s*[:=]\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)/g;
+    let match;
+
+    while ((match = labeledRegex.exec(line)) !== null) {
+      let rawLabel = match[1].trim();
+      // Remove square bracket tags like [MANUAL], [TUNE], etc.
+      rawLabel = rawLabel.replace(/\[.*?\]/g, '').replace(/^[;,\|\s]+/, '').trim();
+      const val = parseFloat(match[2]);
+      if (!isNaN(val) && isFinite(val) && rawLabel.length > 0) {
+        pairs.push({ rawLabel, val });
+      }
+    }
+
+    if (pairs.length > 0) {
+      let legendNeedsUpdate = false;
+
+      for (const item of pairs) {
+        // Resolve channel key by label (NOT by line index!)
+        const key = this.resolveChannelKey(item.rawLabel);
+        const displayName = item.rawLabel.replace(/\s+(?:set\s+to|is)$/i, '').trim() || key;
+        const isNew = this.getOrCreateChannel(key, displayName);
+        if (isNew) legendNeedsUpdate = true;
+
+        const series = this.channelData.get(key);
+        series.push(item.val);
+        this.latestChannelValues.set(key, item.val);
+        this.plotPoints++;
+
+        if (series.length > this.maxPlotWindow) {
+          series.shift();
+        }
+      }
+
+      // Record live CSV row if recording is active
+      if (this.isRecordingCsv) {
+        const now = Date.now();
+        const elapsedSec = ((now - this.csvRecordingStartTime) / 1000).toFixed(3);
+        const row = {
+          timeMs: now,
+          elapsedSec,
+          isoTime: new Date(now).toISOString(),
+          values: new Map()
+        };
+        this.channelOrder.forEach(key => {
+          row.values.set(key, this.latestChannelValues.get(key));
+        });
+        this.csvRecordedRows.push(row);
+        this.btnRecordCsvText.textContent = `Stop (${this.csvRecordedRows.length} rec)`;
+      }
+
+      if (legendNeedsUpdate) {
+        this.updateLegend();
+      } else {
+        this.updateLegendValuesOnly();
+      }
+
+      this.updateLatestValuesDisplay();
+      this.updateSplitYAxisAvailability();
+      this.updateStats();
+      return;
+    }
+
+    // 2. Unlabeled numbers fallback (only if no labels found on line)
+    let numRegex;
+    try {
+      numRegex = new RegExp(this.customRegexInput.value, 'g');
+    } catch (e) {
+      numRegex = /[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/g;
+    }
+
+    const numbers = [];
+    while ((match = numRegex.exec(line)) !== null) {
+      const valStr = match[1] !== undefined ? match[1] : match[0];
+      const val = parseFloat(valStr);
+      if (!isNaN(val) && isFinite(val)) {
+        numbers.push(val);
+      }
+    }
+
+    if (numbers.length > 0) {
+      let legendNeedsUpdate = false;
+
+      numbers.forEach((val, idx) => {
+        const key = `CH${idx + 1}`;
+        const isNew = this.getOrCreateChannel(key, key);
+        if (isNew) legendNeedsUpdate = true;
+
+        const series = this.channelData.get(key);
+        series.push(val);
+        this.latestChannelValues.set(key, val);
+        this.plotPoints++;
+
         if (series.length > this.maxPlotWindow) {
           series.shift();
         }
       });
 
-      if (hasNewChannel) {
-        this.updateLegend();
+      if (this.isRecordingCsv) {
+        const now = Date.now();
+        const elapsedSec = ((now - this.csvRecordingStartTime) / 1000).toFixed(3);
+        const row = {
+          timeMs: now,
+          elapsedSec,
+          isoTime: new Date(now).toISOString(),
+          values: new Map()
+        };
+        this.channelOrder.forEach(key => {
+          row.values.set(key, this.latestChannelValues.get(key));
+        });
+        this.csvRecordedRows.push(row);
+        this.btnRecordCsvText.textContent = `Stop (${this.csvRecordedRows.length} rec)`;
       }
 
-      this.channelCountBadge.textContent = this.channelData.size;
-      this.latestValuesBadge.textContent = matches.map((v, i) => `CH${i + 1}: ${v}`).join('  |  ');
+      if (legendNeedsUpdate) {
+        this.updateLegend();
+      } else {
+        this.updateLegendValuesOnly();
+      }
+
+      this.updateLatestValuesDisplay();
+      this.updateSplitYAxisAvailability();
       this.updateStats();
     }
   }
 
   updateLegend() {
     this.plotChannelsLegend.innerHTML = '';
-    this.channelData.forEach((_, index) => {
-      const chip = document.createElement('div');
-      chip.className = 'legend-chip';
-      const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
+    if (this.channelOrder.length === 0) {
+      this.updateSplitYAxisAvailability();
+      return;
+    }
+
+    this.channelOrder.forEach(key => {
+      const isVisible = this.isChannelVisible(key);
+      const color = this.getChannelColor(key);
+      const name = this.channelNames.get(key) || key;
+      const latestVal = this.latestChannelValues.has(key) ? this.latestChannelValues.get(key) : null;
+
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = `legend-chip ${isVisible ? 'is-visible' : 'is-hidden'}`;
+      chip.setAttribute('data-channel', key);
+      chip.setAttribute('aria-pressed', isVisible ? 'true' : 'false');
+      chip.title = `Click to ${isVisible ? 'hide' : 'show'} "${name}" plot line\nDouble-click to rename label`;
+
+      const eyeIcon = isVisible
+        ? `<svg class="legend-eye-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`
+        : `<svg class="legend-eye-icon is-slashed" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
 
       chip.innerHTML = `
-        <span class="legend-color" style="background: ${color}; box-shadow: 0 0 6px ${color};"></span>
-        <span style="color: ${color}; font-weight: 600;">${this.channelNames.get(index)}</span>
+        <span class="legend-eye-wrap">${eyeIcon}</span>
+        <span class="legend-color ${isVisible ? '' : 'is-muted'}" style="${isVisible ? `background: ${color}; box-shadow: 0 0 7px ${color};` : `border: 2px solid ${color}; background: transparent;`}"></span>
+        <span class="legend-label ${isVisible ? '' : 'is-muted'}" style="color: ${isVisible ? color : 'var(--text-muted)'};">${name}</span>
+        <span class="legend-val-badge ${isVisible ? '' : 'is-hidden-badge'}">${isVisible ? (latestVal !== null ? latestVal : '') : 'Hidden'}</span>
       `;
+
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.toggleChannelVisibility(key);
+      });
+
+      chip.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const currentName = this.channelNames.get(key) || key;
+        const newName = window.prompt(`Rename channel "${currentName}" label:`, currentName);
+        if (newName && newName.trim()) {
+          this.customChannelNames.add(key);
+          this.channelNames.set(key, newName.trim());
+          this.updateLegend();
+          this.updateLatestValuesDisplay();
+          this.updateSplitYAxisAvailability();
+        }
+      });
+
       this.plotChannelsLegend.appendChild(chip);
     });
+
+    if (this.channelOrder.length > 1) {
+      const allVisible = this.channelOrder.every(key => this.isChannelVisible(key));
+      const toggleAllBtn = document.createElement('button');
+      toggleAllBtn.type = 'button';
+      toggleAllBtn.className = 'legend-toggle-all-btn';
+      toggleAllBtn.textContent = allVisible ? 'Hide All' : 'Show All';
+      toggleAllBtn.title = allVisible ? 'Hide all plot lines (labels remain)' : 'Show all plot lines';
+      toggleAllBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.setAllChannelsVisibility(!allVisible);
+      });
+      this.plotChannelsLegend.appendChild(toggleAllBtn);
+    }
+
+    this.updateSplitYAxisAvailability();
   }
 
   startPlotterLoop() {
@@ -692,7 +1119,16 @@ class SerialMonitorApp {
     const ctx = this.ctx;
     const width = this.canvasWidth;
     const height = this.canvasHeight;
-    const padding = { top: 20, right: 25, bottom: 35, left: 55 };
+
+    const visibleKeys = this.channelOrder.filter(key => this.isChannelVisible(key));
+    const isSplitY = this.isSplitYAxis && (visibleKeys.length === 2);
+
+    const padding = {
+      top: 25,
+      right: isSplitY ? 65 : 25,
+      bottom: 35,
+      left: 60
+    };
     const plotW = width - padding.left - padding.right;
     const plotH = height - padding.top - padding.bottom;
 
@@ -702,126 +1138,293 @@ class SerialMonitorApp {
 
     if (plotW <= 0 || plotH <= 0) return;
 
-    // Determine Y min & max
-    let minY = Infinity;
-    let maxY = -Infinity;
+    if (isSplitY) {
+      // DUAL Y-AXIS MODE: Left Y-Axis for Channel 1, Right Y-Axis for Channel 2
+      const ch1Key = visibleKeys[0];
+      const ch2Key = visibleKeys[1];
+      const series1 = this.channelData.get(ch1Key) || [];
+      const series2 = this.channelData.get(ch2Key) || [];
+      const color1 = this.getChannelColor(ch1Key);
+      const color2 = this.getChannelColor(ch2Key);
+      const name1 = this.channelNames.get(ch1Key) || ch1Key;
+      const name2 = this.channelNames.get(ch2Key) || ch2Key;
 
-    const scaleMode = this.plotYRangeSelect.value;
-    if (scaleMode === 'fixed_100') {
-      minY = 0;
-      maxY = 100;
-    } else if (scaleMode === 'fixed_1000') {
-      minY = 0;
-      maxY = 1000;
-    } else if (scaleMode === 'fixed_5000') {
-      minY = 0;
-      maxY = 5000;
+      // Calculate range for Channel 1 (Left Y-Axis)
+      let min1 = Infinity, max1 = -Infinity;
+      for (let i = 0; i < series1.length; i++) {
+        const v = series1[i];
+        if (v < min1) min1 = v;
+        if (v > max1) max1 = v;
+      }
+      if (!isFinite(min1) || !isFinite(max1)) { min1 = 0; max1 = 100; }
+      else if (min1 === max1) { min1 -= 1; max1 += 1; }
+      else {
+        const span = max1 - min1;
+        min1 -= span * 0.08;
+        max1 += span * 0.08;
+      }
+      const range1 = max1 - min1 || 1;
+
+      // Calculate range for Channel 2 (Right Y-Axis)
+      let min2 = Infinity, max2 = -Infinity;
+      for (let i = 0; i < series2.length; i++) {
+        const v = series2[i];
+        if (v < min2) min2 = v;
+        if (v > max2) max2 = v;
+      }
+      if (!isFinite(min2) || !isFinite(max2)) { min2 = 0; max2 = 100; }
+      else if (min2 === max2) { min2 -= 1; max2 += 1; }
+      else {
+        const span = max2 - min2;
+        min2 -= span * 0.08;
+        max2 += span * 0.08;
+      }
+      const range2 = max2 - min2 || 1;
+
+      // Horizontal Grid Lines with Dual Labels
+      const ySteps = 5;
+      for (let i = 0; i <= ySteps; i++) {
+        const ratio = i / ySteps;
+        const yPos = padding.top + ratio * plotH;
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, yPos);
+        ctx.lineTo(padding.left + plotW, yPos);
+        ctx.stroke();
+
+        // Left Y-Axis Label (Value 1 / Channel 1)
+        const val1 = max1 - ratio * range1;
+        ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        ctx.fillStyle = color1;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(val1.toFixed(1), padding.left - 8, yPos);
+
+        // Right Y-Axis Label (Value 2 / Channel 2)
+        const val2 = max2 - ratio * range2;
+        ctx.fillStyle = color2;
+        ctx.textAlign = 'left';
+        ctx.fillText(val2.toFixed(1), padding.left + plotW + 8, yPos);
+      }
+
+      // Vertical Grid Lines
+      const xSteps = 5;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+      for (let i = 0; i <= xSteps; i++) {
+        const xPos = padding.left + (i / xSteps) * plotW;
+        ctx.beginPath();
+        ctx.moveTo(xPos, padding.top);
+        ctx.lineTo(xPos, padding.top + plotH);
+        ctx.stroke();
+      }
+
+      // Axis Headers on Canvas
+      ctx.font = 'bold 11px "Outfit", sans-serif';
+      ctx.textBaseline = 'bottom';
+      ctx.textAlign = 'right';
+      ctx.fillStyle = color1;
+      ctx.fillText(`${name1} (Left Y)`, padding.left - 8, padding.top - 6);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = color2;
+      ctx.fillText(`${name2} (Right Y)`, padding.left + plotW + 8, padding.top - 6);
+
+      // Outer Plot Border
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.strokeRect(padding.left, padding.top, plotW, plotH);
+
+      // Render Channel 1 Line (Normalized to range1)
+      if (series1.length >= 2) {
+        ctx.strokeStyle = color1;
+        ctx.lineWidth = 2.2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        const stepX = plotW / (this.maxPlotWindow - 1);
+        const startOffset = (this.maxPlotWindow - series1.length) * stepX;
+        series1.forEach((val, i) => {
+          const x = padding.left + startOffset + i * stepX;
+          const normalizedY = (val - min1) / range1;
+          const y = padding.top + plotH - normalizedY * plotH;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        const lastIndex = series1.length - 1;
+        const lastVal = series1[lastIndex];
+        const lastX = padding.left + startOffset + lastIndex * stepX;
+        const lastNormY = (lastVal - min1) / range1;
+        const lastY = padding.top + plotH - lastNormY * plotH;
+        ctx.fillStyle = color1;
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Render Channel 2 Line (Normalized to range2)
+      if (series2.length >= 2) {
+        ctx.strokeStyle = color2;
+        ctx.lineWidth = 2.2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        const stepX = plotW / (this.maxPlotWindow - 1);
+        const startOffset = (this.maxPlotWindow - series2.length) * stepX;
+        series2.forEach((val, i) => {
+          const x = padding.left + startOffset + i * stepX;
+          const normalizedY = (val - min2) / range2;
+          const y = padding.top + plotH - normalizedY * plotH;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        const lastIndex = series2.length - 1;
+        const lastVal = series2[lastIndex];
+        const lastX = padding.left + startOffset + lastIndex * stepX;
+        const lastNormY = (lastVal - min2) / range2;
+        const lastY = padding.top + plotH - lastNormY * plotH;
+        ctx.fillStyle = color2;
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else {
-      // Auto-scaling across all current series
-      this.channelData.forEach(series => {
-        for (let i = 0; i < series.length; i++) {
-          const val = series[i];
-          if (val < minY) minY = val;
-          if (val > maxY) maxY = val;
-        }
-      });
+      // STANDARD SINGLE Y-AXIS MODE
+      let minY = Infinity;
+      let maxY = -Infinity;
 
-      if (!isFinite(minY) || !isFinite(maxY)) {
+      const scaleMode = this.plotYRangeSelect.value;
+      if (scaleMode === 'fixed_100') {
         minY = 0;
         maxY = 100;
-      } else if (minY === maxY) {
-        minY -= 1;
-        maxY += 1;
+      } else if (scaleMode === 'fixed_1000') {
+        minY = 0;
+        maxY = 1000;
+      } else if (scaleMode === 'fixed_5000') {
+        minY = 0;
+        maxY = 5000;
       } else {
-        // Add 10% headroom
-        const span = maxY - minY;
-        minY -= span * 0.08;
-        maxY += span * 0.08;
-      }
-    }
+        let hasVisibleSeries = false;
+        this.channelOrder.forEach(key => {
+          if (!this.isChannelVisible(key)) return;
+          const series = this.channelData.get(key) || [];
+          for (let i = 0; i < series.length; i++) {
+            const val = series[i];
+            if (val < minY) minY = val;
+            if (val > maxY) maxY = val;
+            hasVisibleSeries = true;
+          }
+        });
 
-    const yRange = maxY - minY || 1;
-
-    // Draw Grid Lines (Horizontal)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-    ctx.lineWidth = 1;
-    ctx.fillStyle = '#64748b';
-    ctx.font = '11px "JetBrains Mono", monospace';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-
-    const ySteps = 5;
-    for (let i = 0; i <= ySteps; i++) {
-      const ratio = i / ySteps;
-      const yVal = maxY - ratio * yRange;
-      const yPos = padding.top + ratio * plotH;
-
-      ctx.beginPath();
-      ctx.moveTo(padding.left, yPos);
-      ctx.lineTo(padding.left + plotW, yPos);
-      ctx.stroke();
-
-      ctx.fillText(yVal.toFixed(1), padding.left - 8, yPos);
-    }
-
-    // Draw Grid Lines (Vertical)
-    const xSteps = 5;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    for (let i = 0; i <= xSteps; i++) {
-      const xPos = padding.left + (i / xSteps) * plotW;
-      ctx.beginPath();
-      ctx.moveTo(xPos, padding.top);
-      ctx.lineTo(xPos, padding.top + plotH);
-      ctx.stroke();
-    }
-
-    // Outer Plot Border
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.strokeRect(padding.left, padding.top, plotW, plotH);
-
-    // Render Data Series Lines
-    this.channelData.forEach((series, channelIndex) => {
-      if (series.length < 2) return;
-
-      const color = CHANNEL_COLORS[channelIndex % CHANNEL_COLORS.length];
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.2;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-
-      ctx.beginPath();
-      const stepX = plotW / (this.maxPlotWindow - 1);
-      const startOffset = (this.maxPlotWindow - series.length) * stepX;
-
-      series.forEach((val, i) => {
-        const x = padding.left + startOffset + i * stepX;
-        const normalizedY = (val - minY) / yRange;
-        const y = padding.top + plotH - normalizedY * plotH;
-
-        if (i === 0) {
-          ctx.moveTo(x, y);
+        if (!hasVisibleSeries || !isFinite(minY) || !isFinite(maxY)) {
+          minY = 0;
+          maxY = 100;
+        } else if (minY === maxY) {
+          minY -= 1;
+          maxY += 1;
         } else {
-          ctx.lineTo(x, y);
+          const span = maxY - minY;
+          minY -= span * 0.08;
+          maxY += span * 0.08;
         }
+      }
+
+      const yRange = maxY - minY || 1;
+
+      // Draw Grid Lines (Horizontal)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#64748b';
+      ctx.font = '11px "JetBrains Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+
+      const ySteps = 5;
+      for (let i = 0; i <= ySteps; i++) {
+        const ratio = i / ySteps;
+        const yVal = maxY - ratio * yRange;
+        const yPos = padding.top + ratio * plotH;
+
+        ctx.beginPath();
+        ctx.moveTo(padding.left, yPos);
+        ctx.lineTo(padding.left + plotW, yPos);
+        ctx.stroke();
+
+        ctx.fillText(yVal.toFixed(1), padding.left - 8, yPos);
+      }
+
+      // Draw Grid Lines (Vertical)
+      const xSteps = 5;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      for (let i = 0; i <= xSteps; i++) {
+        const xPos = padding.left + (i / xSteps) * plotW;
+        ctx.beginPath();
+        ctx.moveTo(xPos, padding.top);
+        ctx.lineTo(xPos, padding.top + plotH);
+        ctx.stroke();
+      }
+
+      // Outer Plot Border
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.strokeRect(padding.left, padding.top, plotW, plotH);
+
+      // Render Data Series Lines (visible only)
+      this.channelOrder.forEach(key => {
+        if (!this.isChannelVisible(key)) return;
+        const series = this.channelData.get(key) || [];
+        if (series.length < 2) return;
+
+        const color = this.getChannelColor(key);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+
+        ctx.beginPath();
+        const stepX = plotW / (this.maxPlotWindow - 1);
+        const startOffset = (this.maxPlotWindow - series.length) * stepX;
+
+        series.forEach((val, i) => {
+          const x = padding.left + startOffset + i * stepX;
+          const normalizedY = (val - minY) / yRange;
+          const y = padding.top + plotH - normalizedY * plotH;
+
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+
+        // Draw glowing head dot on latest point
+        const lastIndex = series.length - 1;
+        const lastVal = series[lastIndex];
+        const lastX = padding.left + startOffset + lastIndex * stepX;
+        const lastNormY = (lastVal - minY) / yRange;
+        const lastY = padding.top + plotH - lastNormY * plotH;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+        ctx.fill();
       });
-      ctx.stroke();
+    }
 
-      // Draw glowing head dot on latest point
-      const lastIndex = series.length - 1;
-      const lastVal = series[lastIndex];
-      const lastX = padding.left + startOffset + lastIndex * stepX;
-      const lastNormY = (lastVal - minY) / yRange;
-      const lastY = padding.top + plotH - lastNormY * plotH;
-
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // If no data points yet, draw clean placeholder hint
-    if (this.channelData.size === 0) {
+    // Handle empty or all-hidden series placeholder hints
+    const allHidden = this.channelOrder.length > 0 && this.channelOrder.every(key => !this.isChannelVisible(key));
+    if (allHidden) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '13px "Outfit", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('All plot lines hidden — click channel labels in legend above to show', width / 2, height / 2);
+    } else if (this.channelOrder.length === 0) {
       ctx.fillStyle = '#475569';
       ctx.font = '13px "Outfit", sans-serif';
       ctx.textAlign = 'center';
@@ -985,5 +1588,5 @@ class SerialMonitorApp {
 
 // Instantiate once DOM content is ready
 window.addEventListener('DOMContentLoaded', () => {
-  new SerialMonitorApp();
+  window.serialApp = new SerialMonitorApp();
 });
