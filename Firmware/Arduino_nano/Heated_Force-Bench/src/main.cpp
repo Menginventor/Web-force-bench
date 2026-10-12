@@ -160,16 +160,16 @@ void loop() {
     // C. Apply current PWM to pin 9
     analogWrite(PWM_PIN, currentPwm);
 
-    // D. 10 Hz Telemetry output (active when explicitly enabled OR automatically during autotuning)
+    // D. 10 Hz Telemetry output (structured $DAT: protocol to separate plot data from logs)
     if (loggingEnabled || tuneState != STATE_IDLE) {
-      Serial.print(F("Temperature: "));
-      Serial.print(tempC, 2); // e.g. 25.40 °C
-      Serial.print(F(" degC, PWM: "));
+      Serial.print(F("$DAT:Temp="));
+      Serial.print(tempC, 2); // e.g. 25.40
+      Serial.print(F(",PWM="));
       Serial.print(currentPwm);
       if (showVerboseTelemetry) {
-        Serial.print(F(", Voltage: "));
-        Serial.print(vout, 4); // e.g. 0.7540 V
-        Serial.print(F(" V, RawADC: "));
+        Serial.print(F(",Voltage="));
+        Serial.print(vout, 4); // e.g. 0.7540
+        Serial.print(F(",RawADC="));
         Serial.print(rawADC);
       }
       Serial.println();

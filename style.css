@@ -1074,6 +1074,16 @@ select:focus, input:focus {
   color: #fca5a5;
 }
 
+.line-telemetry .terminal-type {
+  background: rgba(168, 85, 247, 0.2);
+  color: var(--accent-purple);
+}
+
+.line-telemetry .terminal-msg {
+  color: #d8b4fe;
+  opacity: 0.9;
+}
+
 /* Input Bar */
 .terminal-input-bar {
   display: flex;

@@ -168,8 +168,9 @@
             <div class="form-group">
               <label for="regexPresetSelect">Regex Preset</label>
               <select id="regexPresetSelect">
+                <option value="telemetry" selected>Auto-Telemetry ($DAT: / Key-Value)</option>
                 <option value="numbers">Numbers Only (Space/Comma/Tab separated)</option>
-                <option value="keyvalue">Key-Value Pairs (e.g. force:12.4, temp:25)</option>
+                <option value="keyvalue">Generic Key-Value Pairs</option>
                 <option value="custom">Custom Regex Pattern...</option>
               </select>
             </div>
@@ -330,6 +331,11 @@
               </div>
 
               <div class="terminal-actions">
+                <label class="toggle-control" title="Filter high-frequency plot stream ($DAT:) from console to keep logs clean and readable">
+                  <input type="checkbox" id="filterPlotInTerminalCheck" checked>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">Filter Plots</span>
+                </label>
                 <label class="toggle-control">
                   <input type="checkbox" id="autoscrollCheck" checked>
                   <span class="toggle-slider"></span>

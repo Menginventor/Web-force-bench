@@ -168,6 +168,7 @@ class SerialMonitorApp {
     this.autoscrollCheck = document.getElementById('autoscrollCheck');
     this.timestampsCheck = document.getElementById('timestampsCheck');
     this.hexViewCheck = document.getElementById('hexViewCheck');
+    this.filterPlotInTerminalCheck = document.getElementById('filterPlotInTerminalCheck');
     this.btnClearTerminal = document.getElementById('btnClearTerminal');
     this.btnExportLog = document.getElementById('btnExportLog');
 
@@ -256,10 +257,10 @@ class SerialMonitorApp {
     // Regex preset switcher
     this.regexPresetSelect.addEventListener('change', () => {
       const preset = this.regexPresetSelect.value;
-      if (preset === 'numbers') {
-        this.customRegexInput.value = '[-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?';
-      } else if (preset === 'keyvalue') {
+      if (preset === 'telemetry' || preset === 'keyvalue') {
         this.customRegexInput.value = '([a-zA-Z0-9_\\-\\.]+)\\s*[:=]\\s*([-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?)';
+      } else if (preset === 'numbers') {
+        this.customRegexInput.value = '[-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?';
       }
     });
 
@@ -640,12 +641,26 @@ class SerialMonitorApp {
       this.incomingBuffer = this.incomingBuffer.slice(newlineIndex + 1);
 
       if (line.length > 0) {
-        // Output to terminal
-        this.appendTerminalLine('RX', line, 'line-rx');
+        const trimmedLine = line.trim();
 
-        // Extract plot data via Regex parser
-        if (!this.isPlotPaused) {
-          this.parseLineForPlotter(line);
+        // ONLY lines starting with "$DAT:" tag are plotted
+        if (/^\$DAT:/i.test(trimmedLine)) {
+          // Extract telemetry payload (strip "$DAT:" tag)
+          const cleanData = trimmedLine.replace(/^\$DAT:\s*/i, '');
+
+          // Feed exclusively into plotter & CSV recorder
+          if (!this.isPlotPaused) {
+            this.parseLineForPlotter(cleanData);
+          }
+
+          // Output to terminal only if user hasn't enabled "Filter Plots"
+          const filterPlot = this.filterPlotInTerminalCheck && this.filterPlotInTerminalCheck.checked;
+          if (!filterPlot) {
+            this.appendTerminalLine('DAT', cleanData, 'line-telemetry');
+          }
+        } else {
+          // All other lines are pure console logs (NEVER plotted)
+          this.appendTerminalLine('RX', line, 'line-rx');
         }
       }
     }
@@ -667,6 +682,20 @@ class SerialMonitorApp {
     const label = rawLabel.trim();
     if (!label) return null;
     const lowerLabel = label.toLowerCase();
+
+    // Map common aliases to canonical keys
+    if (lowerLabel === 'temp' || lowerLabel === 'temperature') {
+      for (const key of this.channelOrder) {
+        if (key.toLowerCase() === 'temp' || key.toLowerCase() === 'temperature') return key;
+      }
+      return 'Temp';
+    }
+    if (lowerLabel === 'pwm') {
+      for (const key of this.channelOrder) {
+        if (key.toLowerCase() === 'pwm') return key;
+      }
+      return 'PWM';
+    }
 
     // 1. Exact match with existing channel keys
     for (const key of this.channelOrder) {
@@ -917,6 +946,10 @@ class SerialMonitorApp {
       let rawLabel = match[1].trim();
       // Remove square bracket tags like [MANUAL], [TUNE], etc.
       rawLabel = rawLabel.replace(/\[.*?\]/g, '').replace(/^[;,\|\s]+/, '').trim();
+      // Ignore if label looks like a log level or state tag
+      if (!rawLabel || /^(?:CONFIG|TUNE|ERROR|WARN|INFO|STATUS|MANUAL|REPORT|CYCLE|PERIOD|PEAK|VALLEY)$/i.test(rawLabel)) {
+        continue;
+      }
       const val = parseFloat(match[2]);
       if (!isNaN(val) && isFinite(val) && rawLabel.length > 0) {
         pairs.push({ rawLabel, val });
