@@ -26,6 +26,8 @@
 // Pin definitions
 const int ANALOG_PIN = A7;
 const int PWM_PIN = 9; // Connect to MOSFET/driver for heating element
+const int HX711_DOUT_PIN = 7; // HX711 Loadcell Data Out
+const int HX711_SCK_PIN = 8;  // HX711 Loadcell Serial Clock
 
 // Calibration & ADC constants
 const float V_REF = 3.30f; // 3.3V external reference connected to AREF pin
@@ -46,6 +48,14 @@ const float TC = 0.0195f;  // 19.5 mV/°C temperature coefficient
 
 // Direct temperature reading (no ADC filter or averaging)
 float currentTempC = -999.0f;
+
+// Load Cell (HX711) State & Calibration
+long currentRawWeight = 0;
+float currentWeight = 0.0f;
+long loadcellTareOffset = 0;
+float loadcellScale = 1.0f;
+bool loadcellHasReading = false;
+bool loadcellTareInitialized = false;
 
 // 10 Hz Control Loop Timing (100 ms)
 const unsigned long LOOP_INTERVAL_MS = 100;
@@ -72,7 +82,7 @@ float tuneTempMax = 50.0f; // Target upper threshold in degC
 int tunePwmMin = 0;        // Minimum PWM (0 - 255)
 int tunePwmMax = 255;      // Maximum PWM (0 - 255)
 int tuneCycles = 3;        // Number of relay cycles N (1 - 20)
-bool showVerboseTelemetry = false; // Default: only show Temp and PWM
+bool showVerboseTelemetry = false; // Default: only show Temp, Weight and PWM
 bool loggingEnabled = false;        // Telemetry reporting disabled by default
 
 // Active tuning runtime variables
@@ -96,7 +106,18 @@ bool piControlActive = false;
 float piIntegral = 0.0f;
 
 // EEPROM Persistent Storage Structure
-struct PiConfig {
+struct AppConfig {
+  uint32_t magic;      // 0x50494334 ("PIC4")
+  float kp;
+  float ki;
+  float u_min;
+  float u_max;
+  long tare_offset;
+  float scale;
+};
+
+// Backward-compatibility struct for older config
+struct PiConfigV3 {
   uint32_t magic;      // 0x50494333 ("PIC3")
   float kp;
   float ki;
@@ -104,7 +125,8 @@ struct PiConfig {
   float u_max;
 };
 
-const uint32_t EEPROM_MAGIC = 0x50494333;
+const uint32_t EEPROM_MAGIC = 0x50494334;
+const uint32_t EEPROM_MAGIC_V3 = 0x50494333;
 const int EEPROM_ADDR = 0;
 
 // Serial command buffer
@@ -121,6 +143,8 @@ void stopTuning(bool notifyUser);
 void updateTuningStateMachine(float currentTemp);
 void finishTuning();
 float readTemperature(float &voutOut, int &rawAdcOut);
+bool hx711ReadNonBlocking(long &rawOut);
+void pollLoadcell();
 void updatePiController(float currentTemp);
 void startController();
 void stopController(bool notifyUser = true);
@@ -136,6 +160,11 @@ void setup() {
   pinMode(PWM_PIN, OUTPUT);
   analogWrite(PWM_PIN, 0);
   currentPwm = 0;
+
+  // Initialize HX711 Loadcell Pins (Non-blocking)
+  pinMode(HX711_DOUT_PIN, INPUT);
+  pinMode(HX711_SCK_PIN, OUTPUT);
+  digitalWrite(HX711_SCK_PIN, LOW);
 
   // Initialize Serial communication at 115200 baud
   Serial.begin(115200);
@@ -153,12 +182,12 @@ void setup() {
   int initRaw = 0;
   currentTempC = readTemperature(initVout, initRaw);
 
-  // Load persistent PI controller settings from EEPROM
+  // Load persistent PI controller & loadcell settings from EEPROM
   loadConfigFromEeprom();
 
   Serial.println(F("\n=================================================="));
-  Serial.println(F("Heated Force-Bench Temperature Controller Ready"));
-  Serial.println(F("Control Loop: 10 Hz | Closed-Loop PI & Autotune"));
+  Serial.println(F("Heated Force-Bench Temperature & Loadcell Ready"));
+  Serial.println(F("Control Loop: 10 Hz | HX711 Loadcell: Pins 7(DAT)/8(CLK)"));
   Serial.println(F("Type 'HELP' or '?' for available commands."));
   Serial.println(F("Telemetry Reporting: OFF by default ('REPORT ON' to enable)"));
   Serial.println(F("=================================================="));
@@ -170,7 +199,10 @@ void loop() {
   // 1. Process serial commands non-blockingly
   handleSerialInput();
 
-  // 2. Run read and control loop strictly at 10 Hz (every 100 ms)
+  // 2. Poll HX711 loadcell non-blockingly (reads only when DOUT is LOW)
+  pollLoadcell();
+
+  // 3. Run read and control loop strictly at 10 Hz (every 100 ms)
   unsigned long currentMillis = millis();
   if (currentMillis - lastLoopTime >= LOOP_INTERVAL_MS) {
     lastLoopTime += LOOP_INTERVAL_MS;
@@ -198,6 +230,8 @@ void loop() {
     if (loggingEnabled || tuneState != STATE_IDLE || piControlActive) {
       Serial.print(F("$DAT:Temp="));
       Serial.print(tempC, 2); // e.g. 25.40
+      Serial.print(F(",Weight="));
+      Serial.print(currentWeight, 2); // e.g. 102.34
       Serial.print(F(",PWM="));
       Serial.print(currentPwm);
       if (piControlActive) {
@@ -205,6 +239,8 @@ void loop() {
         Serial.print(piSetpoint, 2);
       }
       if (showVerboseTelemetry) {
+        Serial.print(F(",RawWeight="));
+        Serial.print(currentRawWeight);
         Serial.print(F(",Voltage="));
         Serial.print(vout, 4); // e.g. 0.7540
         Serial.print(F(",RawADC="));
@@ -223,6 +259,65 @@ float readTemperature(float &voutOut, int &rawAdcOut) {
   voutOut = ((float)rawAdcOut * V_REF) / ADC_RESOLUTION;
   float tempC = (voutOut - V_0C) / TC;
   return tempC;
+}
+
+/**
+ * Non-blocking read of HX711 24-bit ADC.
+ * Returns true if new conversion was available and read, false immediately otherwise.
+ * Never hangs or blocks waiting for DOUT.
+ */
+bool hx711ReadNonBlocking(long &rawOut) {
+  // If DOUT is HIGH, the HX711 conversion is not yet ready.
+  // Return immediately without blocking the control loop!
+  if (digitalRead(HX711_DOUT_PIN) == HIGH) {
+    return false;
+  }
+
+  unsigned long rawValue = 0;
+
+  // Disable interrupts during the 25 clock pulses (~50 µs total) to ensure
+  // PD_SCK high pulse does not exceed 60 µs (which would power-down the HX711).
+  noInterrupts();
+
+  for (uint8_t i = 0; i < 24; i++) {
+    digitalWrite(HX711_SCK_PIN, HIGH);
+    rawValue = (rawValue << 1) | (digitalRead(HX711_DOUT_PIN) == HIGH ? 1 : 0);
+    digitalWrite(HX711_SCK_PIN, LOW);
+  }
+
+  // 25th pulse: Sets next conversion to Channel A, Gain 128
+  digitalWrite(HX711_SCK_PIN, HIGH);
+  digitalWrite(HX711_SCK_PIN, LOW);
+
+  interrupts();
+
+  // Sign extension for 24-bit two's complement value
+  if (rawValue & 0x800000UL) {
+    rawValue |= 0xFF000000UL;
+  }
+
+  rawOut = (long)rawValue;
+  return true;
+}
+
+/**
+ * Polls HX711 non-blockingly and updates weight calculation whenever a conversion is ready
+ */
+void pollLoadcell() {
+  long raw = 0;
+  if (hx711ReadNonBlocking(raw)) {
+    currentRawWeight = raw;
+    if (!loadcellTareInitialized && loadcellTareOffset == 0) {
+      loadcellTareOffset = currentRawWeight;
+      loadcellTareInitialized = true;
+    }
+    loadcellHasReading = true;
+    if (fabs(loadcellScale) > 1e-6f) {
+      currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+    } else {
+      currentWeight = (float)(currentRawWeight - loadcellTareOffset);
+    }
+  }
 }
 
 /**
@@ -546,12 +641,14 @@ void stopController(bool notifyUser) {
 }
 
 void saveConfigToEeprom(bool verbose) {
-  PiConfig cfg;
+  AppConfig cfg;
   cfg.magic = EEPROM_MAGIC;
   cfg.kp = piKp;
   cfg.ki = piKi;
   cfg.u_min = piUmin;
   cfg.u_max = piUmax;
+  cfg.tare_offset = loadcellTareOffset;
+  cfg.scale = loadcellScale;
   EEPROM.put(EEPROM_ADDR, cfg);
   if (verbose) {
     Serial.println(F("[EEPROM] Configuration saved successfully."));
@@ -559,20 +656,39 @@ void saveConfigToEeprom(bool verbose) {
 }
 
 void loadConfigFromEeprom() {
-  PiConfig cfg;
+  AppConfig cfg;
   EEPROM.get(EEPROM_ADDR, cfg);
   if (cfg.magic == EEPROM_MAGIC && !isnan(cfg.kp) && !isnan(cfg.ki) &&
-      !isnan(cfg.u_min) && !isnan(cfg.u_max)) {
+      !isnan(cfg.u_min) && !isnan(cfg.u_max) && !isnan(cfg.scale)) {
     piKp = cfg.kp;
     piKi = cfg.ki;
     piUmin = constrain(cfg.u_min, 0.0f, 255.0f);
     piUmax = constrain(cfg.u_max, 0.0f, 255.0f);
+    loadcellTareOffset = cfg.tare_offset;
+    loadcellScale = (fabs(cfg.scale) > 1e-6f) ? cfg.scale : 1.0f;
+    if (loadcellTareOffset != 0) {
+      loadcellTareInitialized = true;
+    }
   } else {
-    // Defaults
-    piKp = 2.0f;
-    piKi = 0.05f;
-    piUmin = 0.0f;
-    piUmax = 255.0f;
+    // Check if older version PIC3 exists
+    PiConfigV3 v3Cfg;
+    EEPROM.get(EEPROM_ADDR, v3Cfg);
+    if (v3Cfg.magic == EEPROM_MAGIC_V3 && !isnan(v3Cfg.kp) && !isnan(v3Cfg.ki)) {
+      piKp = v3Cfg.kp;
+      piKi = v3Cfg.ki;
+      piUmin = constrain(v3Cfg.u_min, 0.0f, 255.0f);
+      piUmax = constrain(v3Cfg.u_max, 0.0f, 255.0f);
+      loadcellTareOffset = 0;
+      loadcellScale = 1.0f;
+    } else {
+      // Defaults
+      piKp = 2.0f;
+      piKi = 0.05f;
+      piUmin = 0.0f;
+      piUmax = 255.0f;
+      loadcellTareOffset = 0;
+      loadcellScale = 1.0f;
+    }
     saveConfigToEeprom(false);
   }
 }
@@ -585,6 +701,15 @@ void printStatus(float currentTemp) {
   Serial.print(F("Current Temp: "));
   Serial.print(currentTemp, 2);
   Serial.println(F(" degC"));
+  Serial.print(F("Current Weight:"));
+  Serial.print(currentWeight, 2);
+  Serial.print(F(" (Raw: "));
+  Serial.print(currentRawWeight);
+  Serial.println(F(")"));
+  Serial.print(F("Loadcell Cal: Tare="));
+  Serial.print(loadcellTareOffset);
+  Serial.print(F(", Scale="));
+  Serial.println(loadcellScale, 4);
   Serial.print(F("Current PWM:  "));
   Serial.print(currentPwm);
   Serial.println(F(" (Pin 9)"));
@@ -629,8 +754,8 @@ void printStatus(float currentTemp) {
   Serial.print(F("  Cycles:     "));
   Serial.println(tuneCycles);
   Serial.print(F("Telemetry:    "));
-  Serial.println(showVerboseTelemetry ? F("Verbose (Temp, PWM, Voltage, RawADC)")
-                                      : F("Default (Temp, PWM, SP)"));
+  Serial.println(showVerboseTelemetry ? F("Verbose (Temp, Weight, PWM, Voltage, RawADC, RawWeight)")
+                                      : F("Default (Temp, Weight, PWM, SP)"));
   Serial.print(F("Reporting:    "));
   if (loggingEnabled) {
     Serial.println(F("ENABLED (Streaming at 10 Hz)"));
@@ -656,7 +781,16 @@ void printHelp() {
   Serial.println(F("    Display this help menu."));
   Serial.println(F("  STATUS"));
   Serial.println(
-      F("    Show current temperatures, PI state, PWM and parameters."));
+      F("    Show current temperatures, load cell, PI state, PWM and settings."));
+  Serial.println(F("  TARE"));
+  Serial.println(
+      F("    Zero the load cell (sets current raw reading as tare offset)."));
+  Serial.println(F("  SCALE <val> or SET SCALE <val>"));
+  Serial.println(
+      F("    Set load cell calibration scale factor (saved to EEPROM)."));
+  Serial.println(F("  WEIGHT"));
+  Serial.println(
+      F("    Display current load cell weight, raw reading, and calibration."));
   Serial.println(F("  START [CONTROL|TUNE|REPORT]"));
   Serial.println(
       F("    Start closed-loop PI controller, or autotuning, or reporting."));
@@ -677,7 +811,7 @@ void printHelp() {
       F("    Set output PWM saturation limits 0 - 255 (saved to EEPROM)."));
   Serial.println(F("  SAVE / LOAD"));
   Serial.println(
-      F("    Manually save or reload PI parameters to / from EEPROM."));
+      F("    Manually save or reload parameters to / from EEPROM."));
   Serial.println(F("  TUNE <t_min> <t_max> <pwm_min> <pwm_max> <cycles>"));
   Serial.println(
       F("    Configure parameters and start relay tuning immediately."));
@@ -689,12 +823,14 @@ void printHelp() {
       F("    Set manual PWM (0 - 255) on pin 9 (aborts active closed-loop)."));
   Serial.println(F("  VERBOSE [ON/OFF]"));
   Serial.println(
-      F("    Toggle Voltage & Raw ADC in telemetry stream."));
+      F("    Toggle Voltage, Raw ADC & Raw Weight in telemetry stream."));
   Serial.println(F("  SET SP <val>     - Set target setpoint in degC"));
   Serial.println(F("  SET KP <val>     - Set proportional gain Kp"));
   Serial.println(F("  SET KI <val>     - Set integral gain Ki"));
   Serial.println(F("  SET UMIN <val>   - Set minimum output saturation limit"));
   Serial.println(F("  SET UMAX <val>   - Set maximum output saturation limit"));
+  Serial.println(F("  SET SCALE <val>  - Set load cell calibration scale factor"));
+  Serial.println(F("  SET TARE <val>   - Set raw load cell tare offset manually"));
   Serial.println(F("  SET TMIN <val>   - Set Temp Min threshold in degC"));
   Serial.println(F("  SET TMAX <val>   - Set Temp Max threshold in degC"));
   Serial.println(F("  SET PMIN <val>   - Set PWM Min (0 - 255)"));
@@ -872,6 +1008,47 @@ void executeCommand(char *cmd) {
   } else if (strcasecmp(token, "LOAD") == 0) {
     loadConfigFromEeprom();
     Serial.println(F("[EEPROM] Configuration loaded from EEPROM."));
+  } else if (strcasecmp(token, "TARE") == 0) {
+    loadcellTareOffset = currentRawWeight;
+    loadcellTareInitialized = true;
+    if (fabs(loadcellScale) > 1e-6f) {
+      currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+    } else {
+      currentWeight = 0.0f;
+    }
+    saveConfigToEeprom(false);
+    Serial.print(F("[LOADCELL] Tared successfully. Offset set to: "));
+    Serial.print(loadcellTareOffset);
+    Serial.println(F(" (Current Weight: 0.00, Saved to EEPROM)"));
+  } else if (strcasecmp(token, "SCALE") == 0) {
+    char *val = strtok(NULL, " \t,");
+    if (val) {
+      float newScale = atof(val);
+      if (fabs(newScale) > 1e-6f) {
+        loadcellScale = newScale;
+        saveConfigToEeprom(false);
+        if (loadcellHasReading) {
+          currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+        }
+        Serial.print(F("[LOADCELL] Scale factor set to: "));
+        Serial.print(loadcellScale, 4);
+        Serial.println(F(" (Saved to EEPROM)"));
+      } else {
+        Serial.println(F("[ERROR] Scale factor cannot be 0."));
+      }
+    } else {
+      Serial.print(F("[LOADCELL] Current Scale: "));
+      Serial.println(loadcellScale, 4);
+    }
+  } else if (strcasecmp(token, "WEIGHT") == 0) {
+    Serial.print(F("[LOADCELL] Weight: "));
+    Serial.print(currentWeight, 2);
+    Serial.print(F(" | Raw: "));
+    Serial.print(currentRawWeight);
+    Serial.print(F(" | Tare: "));
+    Serial.print(loadcellTareOffset);
+    Serial.print(F(" | Scale: "));
+    Serial.println(loadcellScale, 4);
   } else if (strcasecmp(token, "ENABLE") == 0) {
     char *arg = strtok(NULL, " \t,");
     if (!arg || strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0 ||
@@ -941,7 +1118,7 @@ void executeCommand(char *cmd) {
     char *val = strtok(NULL, " \t,=");
     if (!param || !val) {
       Serial.println(
-          F("[ERROR] Usage: SET <SP|KP|KI|UMIN|UMAX|TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
+          F("[ERROR] Usage: SET <SP|KP|KI|UMIN|UMAX|SCALE|TARE|TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
       return;
     }
     if (strcasecmp(param, "SP") == 0 || strcasecmp(param, "SETPOINT") == 0 || strcasecmp(param, "TARGET") == 0) {
@@ -979,6 +1156,30 @@ void executeCommand(char *cmd) {
       } else {
         stopController(true);
       }
+    } else if (strcasecmp(param, "SCALE") == 0) {
+      float newScale = atof(val);
+      if (fabs(newScale) > 1e-6f) {
+        loadcellScale = newScale;
+        saveConfigToEeprom(false);
+        if (loadcellHasReading) {
+          currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+        }
+        Serial.print(F("[LOADCELL] Scale factor set to: "));
+        Serial.print(loadcellScale, 4);
+        Serial.println(F(" (Saved to EEPROM)"));
+      } else {
+        Serial.println(F("[ERROR] Scale factor cannot be 0."));
+      }
+    } else if (strcasecmp(param, "TARE") == 0) {
+      loadcellTareOffset = atol(val);
+      loadcellTareInitialized = true;
+      saveConfigToEeprom(false);
+      if (fabs(loadcellScale) > 1e-6f) {
+        currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+      }
+      Serial.print(F("[LOADCELL] Tare offset set to: "));
+      Serial.print(loadcellTareOffset);
+      Serial.println(F(" (Saved to EEPROM)"));
     } else if (strcasecmp(param, "TMIN") == 0) {
       tuneTempMin = atof(val);
       Serial.print(F("[CONFIG] Temp Min set to: "));
@@ -1016,7 +1217,7 @@ void executeCommand(char *cmd) {
                                     : F("DISABLED (Stopped)"));
     } else {
       Serial.println(
-          F("[ERROR] Unknown parameter. Valid: SP, KP, KI, UMIN, UMAX, TMIN, TMAX, PMIN, PMAX, CYCLES, VERBOSE, REPORT"));
+          F("[ERROR] Unknown parameter. Valid: SP, KP, KI, UMIN, UMAX, SCALE, TARE, TMIN, TMAX, PMIN, PMAX, CYCLES, VERBOSE, REPORT"));
     }
   } else if (strcasecmp(token, "VERBOSE") == 0) {
     char *arg = strtok(NULL, " \t,");
