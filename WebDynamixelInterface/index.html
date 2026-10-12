@@ -155,7 +155,33 @@
           <span id="activeIdDisplay">1</span>
           <span class="servo-model-badge" id="activeModelDisplay">XL430-W250</span>
         </div>
-        <div class="servo-protocol-tag" id="activeProtocolBadge">PROTOCOL 2.0</div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <span class="servo-model-badge" id="activeModeBadge" style="background: rgba(16, 185, 129, 0.2); color: #34d399;">MODE: POSITION (3)</span>
+          <div class="servo-protocol-tag" id="activeProtocolBadge">PROTOCOL 2.0</div>
+        </div>
+      </div>
+
+      <!-- Operating Mode Configuration Bar -->
+      <div style="display: flex; gap: 8px; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 8px 12px;">
+        <label for="operatingModeSelect" style="font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); white-space: nowrap;">OPERATING MODE:</label>
+        <select id="operatingModeSelect" class="input-select" style="padding: 4px 8px; font-size: 0.8rem; flex: 1;">
+          <option value="3" selected>Mode 3: Position Control (Joint 0°-360° / 0-4095)</option>
+          <option value="4">Mode 4: Extended Position Control (Multi-Turn)</option>
+          <option value="5">Mode 5: Current-based Position Control</option>
+          <option value="1">Mode 1: Velocity Control (Continuous Wheel Mode)</option>
+          <option value="0">Mode 0: Current / Torque Control</option>
+          <option value="16">Mode 16: PWM Control</option>
+        </select>
+        <button id="btnSetOperatingMode" class="btn-primary" style="padding: 5px 12px; font-size: 0.78rem;">SET MODE</button>
+      </div>
+
+      <!-- Torque Inactive Warning Banner -->
+      <div id="torqueAlertBanner" class="alert-banner" style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">⚠️</span>
+          <span><strong>TORQUE IS DISABLED:</strong> Motor is free to spin. Enable torque to rotate to commanded position.</span>
+        </div>
+        <button id="btnQuickArmTorque" class="btn-accent" style="padding: 4px 10px; font-size: 0.75rem; white-space: nowrap;">⚡ ENABLE TORQUE</button>
       </div>
 
       <!-- Rotary Horn Dial -->
@@ -209,6 +235,48 @@
         <button class="quick-angle-btn" data-angle="270">270°</button>
         <button class="quick-angle-btn" data-angle="300">300° (Max P1)</button>
         <button class="quick-angle-btn" data-angle="360">360°</button>
+      </div>
+
+      <!-- Dynamic Velocity / Speed Controller (Visible in Mode 1) -->
+      <div id="velocityControlBox" class="mode-controller-box" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 0.82rem; font-weight: 700; color: var(--accent-cyan);">⚡ SPEED / VELOCITY CONTROL (MODE 1)</span>
+          <span id="velLiveReadout" style="font-family: var(--font-mono); font-size: 0.8rem; color: #fff;">0.0 RPM</span>
+        </div>
+        <div class="slider-group">
+          <input type="range" id="sliderLiveVelocity" class="range-slider" min="-150" max="150" step="1" value="0">
+          <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-dim);">
+            <span>-150 RPM (Rev)</span>
+            <span>0 RPM (Stop)</span>
+            <span>+150 RPM (Fwd)</span>
+          </div>
+        </div>
+        <div class="jog-btn-group">
+          <button class="jog-btn" data-live-speed="-50">◀◀ -50 RPM</button>
+          <button class="jog-btn" data-live-speed="-20">◀ -20 RPM</button>
+          <button class="jog-btn stop" id="btnLiveStopVelocity">■ STOP (0)</button>
+          <button class="jog-btn" data-live-speed="20">▶ +20 RPM</button>
+          <button class="jog-btn" data-live-speed="50">▶▶ +50 RPM</button>
+        </div>
+      </div>
+
+      <!-- Dynamic Multiturn Controller (Visible in Mode 4) -->
+      <div id="multiturnControlBox" class="mode-controller-box" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 0.82rem; font-weight: 700; color: #c084fc;">🔄 MULTITURN / EXTENDED POSITION (MODE 4)</span>
+          <span id="multiturnLiveReadout" style="font-family: var(--font-mono); font-size: 0.8rem; color: #fff;">0.00 Revs (0 ticks)</span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="number" id="inputLiveTurns" class="input-text" value="0.0" step="0.5" style="width: 100px;">
+          <button class="btn-primary" id="btnApplyLiveTurns" style="padding: 6px 14px; font-size: 0.78rem;">ROTATE TO TURNS</button>
+          <button class="btn-secondary" id="btnZeroLiveTurns" style="padding: 6px 12px; font-size: 0.78rem;">RESET TO 0</button>
+        </div>
+        <div class="jog-btn-group">
+          <button class="jog-btn" data-live-turn="-3">-3 Revs</button>
+          <button class="jog-btn" data-live-turn="-1">-1 Rev</button>
+          <button class="jog-btn" data-live-turn="1">+1 Rev</button>
+          <button class="jog-btn" data-live-turn="3">+3 Revs</button>
+        </div>
       </div>
 
       <!-- Switches: Torque & LED -->
@@ -307,7 +375,8 @@
 
       <!-- Quick Maintenance Actions -->
       <div style="display: flex; gap: 8px;">
-        <button class="btn-secondary" id="btnRebootServo" style="flex: 1;">REBOOT SERVO</button>
+        <button class="btn-secondary" id="btnInspectParamsDirect" style="flex: 1.2;">🔍 MOTOR PARAMETERS</button>
+        <button class="btn-secondary" id="btnRebootServo" style="flex: 1;">REBOOT</button>
         <button class="btn-danger" id="btnEmergencyStop" style="flex: 1;">EMERGENCY STOP</button>
       </div>
     </section>
@@ -322,33 +391,84 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
           LIVE SCOPE
         </button>
+        <button class="tab-btn" data-tab="tab-mode-tests">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14h2v2h-2zm0-10h2v8h-2z"/></svg>
+          MODE TESTS
+        </button>
+        <button class="tab-btn" data-tab="tab-params">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          MOTOR PARAMS
+        </button>
         <button class="tab-btn" data-tab="tab-sequencer">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
-          SWEEP / SINE TEST
+          SWEEP / SINE
         </button>
         <button class="tab-btn" data-tab="tab-packets">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-5 14H4v-4h11v4zm0-5H4V9h11v4zm5 5h-4V9h4v9z"/></svg>
-          PACKET INSPECTOR
+          PACKETS
         </button>
       </nav>
 
       <!-- TAB 1: Live Scope Plotter -->
       <div class="tab-content active" id="tab-scope">
+        <!-- Plot Signal / Mode Selector Toolbar -->
+        <div class="scope-mode-bar">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span class="scope-mode-label" style="font-size: 0.72rem; font-weight: 800; color: var(--text-dim); letter-spacing: 0.05em;">PLOT SIGNAL:</span>
+            <div class="scope-mode-toggles">
+              <button class="scope-mode-btn active" data-scope-mode="single" id="btnScopeModeSingle">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9"/></svg>
+                SINGLE TURN (0° - 360°)
+              </button>
+              <button class="scope-mode-btn" data-scope-mode="multiturn" id="btnScopeModeMultiturn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 2v6h-6M21 15a9 9 0 1 1-3-7.7L21 8"/></svg>
+                MULTITURN (REVOLUTIONS)
+              </button>
+              <button class="scope-mode-btn" data-scope-mode="speed" id="btnScopeModeSpeed">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                SPEED / VELOCITY (RPM)
+              </button>
+            </div>
+          </div>
+
+          <!-- Live Target / Actual / Error Badges -->
+          <div class="scope-live-badges">
+            <span class="scope-badge-target" id="scopeTargetBadge">TARGET: 2048 ticks</span>
+            <span class="scope-badge-actual" id="scopeActualBadge">ACTUAL: 2048 ticks</span>
+            <span class="scope-badge-error" id="scopeErrorBadge">ERR: 0 ticks</span>
+          </div>
+        </div>
+
         <div class="scope-canvas-wrapper">
           <canvas id="scopeCanvas" class="scope-canvas"></canvas>
+          <div class="scope-canvas-overlay" id="scopeCanvasOverlay">
+            <span id="scopeModeWatermark">MODE: SINGLE TURN (0 - 4095 TICKS)</span>
+            <span id="scopePointsWatermark">200 SAMPLES</span>
+          </div>
         </div>
 
         <div class="scope-controls-row">
-          <div style="display: flex; gap: 8px; align-items: center;">
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             <button class="btn-secondary" id="btnScopePause" style="padding: 6px 12px; font-size: 0.78rem;">PAUSE</button>
             <button class="btn-secondary" id="btnScopeClear" style="padding: 6px 12px; font-size: 0.78rem;">CLEAR</button>
             <button class="btn-secondary" id="btnScopeExportCsv" style="padding: 6px 12px; font-size: 0.78rem;">EXPORT CSV</button>
+
+            <!-- Window Size Selector -->
+            <div style="display: flex; align-items: center; gap: 6px; margin-left: 6px;">
+              <span style="font-size: 0.72rem; color: var(--text-dim); font-weight: 700;">WINDOW:</span>
+              <select id="scopeWindowSelect" class="input-select" style="padding: 4px 8px; font-size: 0.75rem; width: auto;">
+                <option value="100">100 Pts</option>
+                <option value="200" selected>200 Pts</option>
+                <option value="400">400 Pts</option>
+                <option value="600">600 Pts</option>
+              </select>
+            </div>
           </div>
 
-          <div style="font-size: 0.75rem; color: var(--text-dim); display: flex; gap: 12px;">
-            <span style="color: #f43f5e;">■ Target (Goal)</span>
-            <span style="color: #38bdf8;">■ Actual (Present)</span>
-            <span style="color: #f59e0b;">■ Load/Current</span>
+          <!-- Dynamic Legend Indicator -->
+          <div class="scope-legend-box" id="scopeLegendBox" style="font-size: 0.75rem; font-family: var(--font-mono); display: flex; gap: 14px; align-items: center;">
+            <span id="scopeLegendTarget" style="color: #f43f5e; font-weight: 600;">--- Target (Goal)</span>
+            <span id="scopeLegendActual" style="color: #38bdf8; font-weight: 600;">― Actual (Present)</span>
           </div>
         </div>
 
@@ -368,7 +488,162 @@
         </div>
       </div>
 
-      <!-- TAB 2: Sweep & Sine Motion Generator -->
+      <!-- TAB 2: Speed & Multiturn Mode Tests -->
+      <div class="tab-content" id="tab-mode-tests">
+        <!-- Speed Mode Test Bench -->
+        <div class="sequencer-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="font-weight: 700; font-size: 0.88rem; color: var(--accent-cyan); display: flex; align-items: center; gap: 6px;">
+              <span>⚡</span> SPEED / VELOCITY MODE TEST (MODE 1)
+            </div>
+            <button class="btn-accent" id="btnSwitchSpeedMode" style="padding: 4px 10px; font-size: 0.75rem;">SWITCH TO SPEED MODE</button>
+          </div>
+          <div style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4;">
+            Tests wheel/continuous velocity control via Address 104 (Goal Velocity). Commands velocity in RPM.
+          </div>
+
+          <div class="form-group">
+            <div style="display: flex; justify-content: space-between; font-size: 0.78rem;">
+              <span>TARGET VELOCITY (RPM)</span>
+              <span id="testSpeedValReadout" style="font-family: var(--font-mono); font-weight: 700; color: #fff;">0.0 RPM</span>
+            </div>
+            <input type="range" id="testSpeedSlider" class="range-slider" min="-150" max="150" step="1" value="0">
+            <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-dim);">
+              <span>-150 RPM (Rev)</span>
+              <span>0 (Stop)</span>
+              <span>+150 RPM (Fwd)</span>
+            </div>
+          </div>
+
+          <div class="jog-btn-group">
+            <button class="jog-btn" data-speed="-60">◀◀ -60 RPM</button>
+            <button class="jog-btn" data-speed="-20">◀ -20 RPM</button>
+            <button class="jog-btn stop" id="btnTestStopSpeed">■ STOP (0 RPM)</button>
+            <button class="jog-btn" data-speed="20">▶ +20 RPM</button>
+            <button class="jog-btn" data-speed="60">▶▶ +60 RPM</button>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0,0,0,0.3); border-radius: 6px; font-size: 0.78rem;">
+            <span style="color: var(--text-secondary);">ACTUAL MOTOR VELOCITY:</span>
+            <span id="testSpeedActualReadout" style="font-family: var(--font-mono); font-weight: 700; color: var(--accent-emerald);">0.0 RPM</span>
+          </div>
+
+          <!-- Ramp & Step Speed Tests -->
+          <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <button class="btn-secondary" id="btnRampSpeedTest" style="flex: 1; font-size: 0.78rem;">RAMP 0 → 50 RPM TEST</button>
+            <button class="btn-secondary" id="btnOscillateSpeedTest" style="flex: 1; font-size: 0.78rem;">±30 RPM OSCILLATE TEST</button>
+          </div>
+        </div>
+
+        <!-- Multiturn Mode Test Bench -->
+        <div class="sequencer-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="font-weight: 700; font-size: 0.88rem; color: #c084fc; display: flex; align-items: center; gap: 6px;">
+              <span>🔄</span> MULTITURN / EXTENDED POSITION (MODE 4)
+            </div>
+            <button class="btn-accent" id="btnSwitchMultiturnMode" style="padding: 4px 10px; font-size: 0.75rem;">SWITCH TO MULTITURN</button>
+          </div>
+          <div style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4;">
+            Enables multi-turn continuous rotation position control (±256 full turns / ±1,048,575 ticks).
+          </div>
+
+          <div class="scan-range-row">
+            <div class="form-group">
+              <label class="form-label" for="testTurnsInput">TARGET REVOLUTIONS (TURNS)</label>
+              <input type="number" id="testTurnsInput" class="input-text" value="3.0" step="0.5">
+            </div>
+            <div class="form-group">
+              <label class="form-label">CALCULATED TICKS</label>
+              <input type="text" id="testTurnsTicksReadout" class="input-text" value="12288 ticks" readonly style="font-family: var(--font-mono); color: var(--accent-cyan);">
+            </div>
+          </div>
+
+          <div class="jog-btn-group">
+            <button class="jog-btn" data-turn="-5">-5 Revs</button>
+            <button class="jog-btn" data-turn="-2">-2 Revs</button>
+            <button class="jog-btn" data-turn="-1">-1 Rev</button>
+            <button class="jog-btn stop" data-turn="0">0 (Origin)</button>
+            <button class="jog-btn" data-turn="1">+1 Rev</button>
+            <button class="jog-btn" data-turn="2">+2 Revs</button>
+            <button class="jog-btn" data-turn="5">+5 Revs</button>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(0,0,0,0.3); border-radius: 6px; font-size: 0.78rem;">
+            <span style="color: var(--text-secondary);">ACTUAL MOTOR POSITION:</span>
+            <span id="testMultiturnActualReadout" style="font-family: var(--font-mono); font-weight: 700; color: #c084fc;">0.00 Revs (0 ticks)</span>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="btn-primary" id="btnExecuteMultiturnMove" style="flex: 1;">ROTATE TO TARGET TURNS</button>
+            <button class="btn-secondary" id="btnMultiturnSweepTest" style="flex: 1; font-size: 0.78rem;">SWEEP ±3 REVS TEST</button>
+          </div>
+        </div>
+
+        <!-- Return to Standard Joint Mode -->
+        <button class="btn-secondary" id="btnReturnToJointMode" style="padding: 9px; font-weight: 700; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);">
+          ↺ RETURN TO STANDARD JOINT MODE (MODE 3: 0° - 360°)
+        </button>
+      </div>
+
+      <!-- TAB 3: Motor Parameters & FW Inspector -->
+      <div class="tab-content" id="tab-params">
+        <div class="param-inspector-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button class="btn-primary" id="btnReadAllParams" style="padding: 7px 14px; font-size: 0.8rem;">
+              🔄 READ ALL MOTOR PARAMETERS
+            </button>
+            <button class="btn-secondary" id="btnExportParamsJson" style="padding: 7px 12px; font-size: 0.8rem;">
+              📥 EXPORT JSON
+            </button>
+          </div>
+          <span id="paramReadStatus" style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono);">
+            Click "READ ALL" to inspect EEPROM & RAM
+          </span>
+        </div>
+
+        <!-- Identity Highlights Card -->
+        <div class="identity-card-grid">
+          <div class="identity-box">
+            <div class="identity-box-title">MODEL & NUMBER</div>
+            <div class="identity-box-val" id="paramModelName">--</div>
+            <div class="identity-box-sub" id="paramModelNum">Model: --</div>
+          </div>
+          <div class="identity-box">
+            <div class="identity-box-title">SERIES & BUS TYPE</div>
+            <div class="identity-box-val" id="paramSeries">--</div>
+            <div class="identity-box-sub" id="paramBus">Bus: --</div>
+          </div>
+          <div class="identity-box">
+            <div class="identity-box-title">FIRMWARE VERSION</div>
+            <div class="identity-box-val" id="paramFwVer">--</div>
+            <div class="identity-box-sub" id="paramProtocolVer">Protocol: --</div>
+          </div>
+        </div>
+
+        <!-- Parameters Table -->
+        <div class="param-table-container">
+          <table class="param-table" id="paramTable">
+            <thead>
+              <tr>
+                <th style="width: 55px;">ADDR</th>
+                <th style="width: 170px;">PARAMETER</th>
+                <th style="width: 110px;">VALUE</th>
+                <th style="width: 70px;">TYPE</th>
+                <th>DESCRIPTION</th>
+              </tr>
+            </thead>
+            <tbody id="paramTableBody">
+              <tr>
+                <td colspan="5" style="text-align: center; color: var(--text-dim); padding: 30px;">
+                  No parameters loaded yet.<br>Click "READ ALL MOTOR PARAMETERS" to inspect EEPROM and RAM table.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB 4: Sweep & Sine Motion Generator -->
       <div class="tab-content" id="tab-sequencer">
         <div class="sequencer-card">
           <div style="font-weight: 700; font-size: 0.9rem; color: var(--accent-cyan);">

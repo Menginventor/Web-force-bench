@@ -181,6 +181,67 @@ class SerialMonitorApp {
     // Canvas
     this.plotterCanvas = document.getElementById('plotterCanvas');
     this.ctx = this.plotterCanvas.getContext('2d');
+
+    // Restore previously used connection settings (baud rate)
+    this.restoreSavedSettings();
+  }
+
+  restoreSavedSettings() {
+    try {
+      const savedBaud = localStorage.getItem('serial_monitor_baud_rate');
+      const savedCustom = localStorage.getItem('serial_monitor_custom_baud');
+
+      if (savedCustom && this.customBaudInput) {
+        this.customBaudInput.value = savedCustom;
+      }
+
+      if (savedBaud && this.baudRateSelect) {
+        if (savedBaud === 'custom') {
+          this.baudRateSelect.value = 'custom';
+          if (this.customBaudGroup) {
+            this.customBaudGroup.classList.remove('hidden');
+          }
+        } else {
+          let exists = false;
+          for (let i = 0; i < this.baudRateSelect.options.length; i++) {
+            if (this.baudRateSelect.options[i].value === savedBaud) {
+              exists = true;
+              break;
+            }
+          }
+          if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = savedBaud;
+            opt.textContent = `${Number(savedBaud).toLocaleString()} (Saved)`;
+            const customOpt = this.baudRateSelect.querySelector('option[value="custom"]');
+            if (customOpt) {
+              this.baudRateSelect.insertBefore(opt, customOpt);
+            } else {
+              this.baudRateSelect.appendChild(opt);
+            }
+          }
+          this.baudRateSelect.value = savedBaud;
+          if (this.customBaudGroup) {
+            this.customBaudGroup.classList.add('hidden');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not access localStorage for baud rate:', e);
+    }
+  }
+
+  saveCurrentSettings() {
+    try {
+      if (this.baudRateSelect) {
+        localStorage.setItem('serial_monitor_baud_rate', this.baudRateSelect.value);
+      }
+      if (this.customBaudInput && this.customBaudInput.value) {
+        localStorage.setItem('serial_monitor_custom_baud', this.customBaudInput.value);
+      }
+    } catch (e) {
+      console.warn('Could not save to localStorage:', e);
+    }
   }
 
   initCanvas() {
@@ -248,7 +309,14 @@ class SerialMonitorApp {
       } else {
         this.customBaudGroup.classList.add('hidden');
       }
+      this.saveCurrentSettings();
     });
+
+    if (this.customBaudInput) {
+      this.customBaudInput.addEventListener('input', () => {
+        this.saveCurrentSettings();
+      });
+    }
 
     // Connection buttons
     this.btnConnect.addEventListener('click', () => this.handleConnect());
@@ -482,6 +550,7 @@ class SerialMonitorApp {
     }
 
     try {
+      this.saveCurrentSettings();
       this.updateDeviceInfo(this.port);
 
       const baudRate = this.getBaudRate();

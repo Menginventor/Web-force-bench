@@ -260,31 +260,39 @@ function buildPacketP2(id, instruction, params = []) {
 }
 
 /**
- * Helper to convert integer to little-endian bytes
+ * Helper to convert integer to little-endian bytes using DataView
+ * Correctly encodes 8-bit, 16-bit, and 32-bit signed and unsigned values
  */
 function intToBytes(value, size) {
-  const bytes = [];
-  for (let i = 0; i < size; i++) {
-    bytes.push((value >> (i * 8)) & 0xff);
+  const buf = new ArrayBuffer(4);
+  const view = new DataView(buf);
+  const num = Math.round(Number(value) || 0);
+  if (size === 1) {
+    view.setInt8(0, num);
+  } else if (size === 2) {
+    view.setInt16(0, num, true);
+  } else if (size === 4) {
+    view.setInt32(0, num, true);
   }
-  return bytes;
+  return Array.from(new Uint8Array(buf).subarray(0, size));
 }
 
 /**
- * Helper to convert little-endian bytes to integer
+ * Helper to convert little-endian bytes to integer using DataView
+ * Correctly decodes 8-bit, 16-bit, and 32-bit signed/unsigned values without JS shift truncation
  */
 function bytesToInt(bytes, signed = false) {
-  let val = 0;
-  for (let i = 0; i < bytes.length; i++) {
-    val |= bytes[i] << (i * 8);
+  if (!bytes || bytes.length === 0) return 0;
+  const buf = new ArrayBuffer(4);
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < Math.min(4, bytes.length); i++) {
+    u8[i] = bytes[i];
   }
-  if (signed) {
-    const bits = bytes.length * 8;
-    if (val >= 1 << (bits - 1)) {
-      val -= 1 << bits;
-    }
-  }
-  return val;
+  const view = new DataView(buf);
+  if (bytes.length === 1) return signed ? view.getInt8(0) : view.getUint8(0);
+  if (bytes.length === 2) return signed ? view.getInt16(0, true) : view.getUint16(0, true);
+  if (bytes.length >= 4) return signed ? view.getInt32(0, true) : view.getUint32(0, true);
+  return 0;
 }
 
 /**
@@ -339,12 +347,86 @@ function decodeErrorsP2(errorByte) {
   return errors;
 }
 
+/**
+ * Returns enriched model information including series, gear ratio, bus type
+ */
+function getModelInfo(modelNum) {
+  const dict = {
+    1060: { name: "XL430-W250", series: "Dynamixel X-Series", gear: "258.5:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "11.1V" },
+    1070: { name: "XC430-W150", series: "Dynamixel X-Series", gear: "150:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "11.1V" },
+    1080: { name: "XC430-W240", series: "Dynamixel X-Series", gear: "240:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "11.1V" },
+    1020: { name: "XM430-W210", series: "Dynamixel X-Series", gear: "212.6:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+    1030: { name: "XM430-W350", series: "Dynamixel X-Series", gear: "353.5:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+    1040: { name: "XH430-W210", series: "Dynamixel X-Series", gear: "212.6:1", bus: "RS-485 (4-pin)", resolution: "4096 (0.088°)", volt: "24.0V" },
+    1050: { name: "XH430-W350", series: "Dynamixel X-Series", gear: "353.5:1", bus: "RS-485 (4-pin)", resolution: "4096 (0.088°)", volt: "24.0V" },
+    1090: { name: "XM540-W150", series: "Dynamixel X-Series", gear: "152.3:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+    1100: { name: "XM540-W270", series: "Dynamixel X-Series", gear: "272.5:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+    1190: { name: "XL330-M077", series: "Dynamixel X-Series (Micro)", gear: "77:1", bus: "TTL (5V)", resolution: "4096 (0.088°)", volt: "5.0V" },
+    1200: { name: "XL330-M288", series: "Dynamixel X-Series (Micro)", gear: "288.5:1", bus: "TTL (5V)", resolution: "4096 (0.088°)", volt: "5.0V" },
+    12: { name: "AX-12A", series: "Dynamixel Classic AX", gear: "254:1", bus: "TTL (3-pin)", resolution: "1024 (0.29°)", volt: "11.1V" },
+    18: { name: "AX-18A", series: "Dynamixel Classic AX", gear: "254:1", bus: "TTL (3-pin)", resolution: "1024 (0.29°)", volt: "11.1V" },
+    300: { name: "AX-12W", series: "Dynamixel Classic AX", gear: "32:1", bus: "TTL (3-pin)", resolution: "1024 (0.29°)", volt: "11.1V" },
+    29: { name: "MX-28 (1.0)", series: "Dynamixel MX Series v1", gear: "193:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+    30: { name: "MX-28 (2.0)", series: "Dynamixel MX Series v2", gear: "193:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+    311: { name: "MX-64 (2.0)", series: "Dynamixel MX Series v2", gear: "200:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+    321: { name: "MX-106 (2.0)", series: "Dynamixel MX Series v2", gear: "225:1", bus: "TTL (3-pin)", resolution: "4096 (0.088°)", volt: "12.0V" },
+  };
+  return dict[modelNum] || {
+    name: DXL_MODELS[modelNum] || `Model 0x${(modelNum || 0).toString(16).toUpperCase()}`,
+    series: "Robotis Dynamixel",
+    gear: "Standard",
+    bus: "Serial",
+    resolution: "4096",
+    volt: "11.1V - 12.0V"
+  };
+}
+
+// Complete parameter registry for inspection
+const PARAM_REGISTRY_P2 = [
+  { addr: 0, size: 2, name: "Model Number", eeprom: true, unit: "", desc: "Unique actuator model identification" },
+  { addr: 6, size: 1, name: "Firmware Version", eeprom: true, unit: "", desc: "Actuator firmware build revision" },
+  { addr: 7, size: 1, name: "Device ID", eeprom: true, unit: "", desc: "Bus communication identifier (0 - 252)" },
+  { addr: 8, size: 1, name: "Baud Rate", eeprom: true, unit: "index", desc: "Serial communication speed index (e.g. 3 = 1Mbps)" },
+  { addr: 9, size: 1, name: "Return Delay Time", eeprom: true, unit: "2 µs", desc: "Response delay before returning status packet" },
+  { addr: 10, size: 1, name: "Drive Mode", eeprom: true, unit: "flags", desc: "Direction / Velocity vs Time profile mode" },
+  { addr: 11, size: 1, name: "Operating Mode", eeprom: true, unit: "mode", desc: "0:Current, 1:Velocity, 3:Position, 4:Ext Position, 5:Current-Pos, 16:PWM" },
+  { addr: 12, size: 1, name: "Secondary (Shadow) ID", eeprom: true, unit: "", desc: "Secondary bus ID for simultaneous broadcast" },
+  { addr: 13, size: 1, name: "Protocol Type", eeprom: true, unit: "ver", desc: "1: Protocol 1.0, 2: Protocol 2.0" },
+  { addr: 20, size: 4, name: "Homing Offset", eeprom: true, unit: "pulse", desc: "Mechanical home zero compensation offset" },
+  { addr: 24, size: 4, name: "Moving Threshold", eeprom: true, unit: "0.229 rpm", desc: "Velocity threshold to determine stopped status" },
+  { addr: 31, size: 1, name: "Temperature Limit", eeprom: true, unit: "°C", desc: "Thermal shutdown threshold limit" },
+  { addr: 32, size: 2, name: "Max Voltage Limit", eeprom: true, unit: "0.1 V", desc: "Over-voltage error trigger limit" },
+  { addr: 34, size: 2, name: "Min Voltage Limit", eeprom: true, unit: "0.1 V", desc: "Under-voltage error trigger limit" },
+  { addr: 36, size: 2, name: "PWM Limit", eeprom: true, unit: "0.113 %", desc: "Maximum voltage duty ratio output" },
+  { addr: 38, size: 2, name: "Current Limit", eeprom: true, unit: "mA", desc: "Maximum allowable motor current output" },
+  { addr: 40, size: 4, name: "Acceleration Limit", eeprom: true, unit: "rev/min²", desc: "Maximum allowable profile acceleration" },
+  { addr: 44, size: 4, name: "Velocity Limit", eeprom: true, unit: "0.229 rpm", desc: "Maximum allowable rotational speed limit" },
+  { addr: 48, size: 4, name: "Max Position Limit", eeprom: true, unit: "pulse", desc: "Software travel limit high (default: 4095)" },
+  { addr: 52, size: 4, name: "Min Position Limit", eeprom: true, unit: "pulse", desc: "Software travel limit low (default: 0)" },
+  { addr: 63, size: 1, name: "Shutdown Errors", eeprom: true, unit: "mask", desc: "Hardware errors that automatically turn off torque" },
+  { addr: 64, size: 1, name: "Torque Enable", eeprom: false, unit: "0/1", desc: "Motor power state (0: Free, 1: Powered)" },
+  { addr: 65, size: 1, name: "Onboard LED", eeprom: false, unit: "0/1", desc: "Diagnostic LED status indicator" },
+  { addr: 70, size: 1, name: "Hardware Error Status", eeprom: false, unit: "flags", desc: "Current active hardware error condition bits" },
+  { addr: 76, size: 2, name: "Velocity I Gain", eeprom: false, unit: "", desc: "Velocity PID loop integral gain" },
+  { addr: 78, size: 2, name: "Velocity P Gain", eeprom: false, unit: "", desc: "Velocity PID loop proportional gain" },
+  { addr: 80, size: 2, name: "Position D Gain", eeprom: false, unit: "", desc: "Position PID loop derivative gain" },
+  { addr: 82, size: 2, name: "Position I Gain", eeprom: false, unit: "", desc: "Position PID loop integral gain" },
+  { addr: 84, size: 2, name: "Position P Gain", eeprom: false, unit: "", desc: "Position PID loop proportional gain" },
+  { addr: 88, size: 2, name: "Feedforward 2nd Gain", eeprom: false, unit: "", desc: "Acceleration feedforward gain" },
+  { addr: 90, size: 2, name: "Feedforward 1st Gain", eeprom: false, unit: "", desc: "Velocity feedforward gain" },
+  { addr: 104, size: 4, name: "Goal Velocity", eeprom: false, unit: "0.229 rpm", desc: "Target velocity command in Speed Mode" },
+  { addr: 112, size: 4, name: "Profile Velocity", eeprom: false, unit: "0.229 rpm", desc: "Maximum trajectory speed limit" },
+  { addr: 116, size: 4, name: "Goal Position", eeprom: false, unit: "pulse", desc: "Target position in Joint/Extended Position mode" },
+];
+
 // Export to window for browser usage
 window.DXL = {
   INST: DXL_INST,
   MODELS: DXL_MODELS,
   P1_CTRL: DXL_P1_CTRL,
   P2_CTRL: DXL_P2_CTRL,
+  PARAM_REGISTRY_P2,
+  getModelInfo,
   buildPacketP1,
   buildPacketP2,
   calculateCRC2,
@@ -356,3 +438,4 @@ window.DXL = {
   decodeErrorsP1,
   decodeErrorsP2,
 };
+
