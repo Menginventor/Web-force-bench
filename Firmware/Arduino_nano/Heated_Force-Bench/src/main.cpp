@@ -145,6 +145,10 @@ void finishTuning();
 float readTemperature(float &voutOut, int &rawAdcOut);
 bool hx711ReadNonBlocking(long &rawOut);
 void pollLoadcell();
+bool getLoadcellAverage(long &avgRawOut, int samples = 20);
+void tareLoadcell();
+void calibrateLoadcell(float knownWeight);
+void handleCalibratePrompt();
 void updatePiController(float currentTemp);
 void startController();
 void stopController(bool notifyUser = true);
@@ -317,6 +321,159 @@ void pollLoadcell() {
     } else {
       currentWeight = (float)(currentRawWeight - loadcellTareOffset);
     }
+  }
+}
+
+/**
+ * Takes specified number of samples (default: 20) from HX711 and calculates average.
+ * Prints '.' for each sample collected as a visual loading indicator.
+ */
+bool getLoadcellAverage(long &avgRawOut, int samples) {
+  int64_t sum = 0;
+  for (int i = 0; i < samples; i++) {
+    unsigned long startWait = millis();
+    long raw = 0;
+    while (!hx711ReadNonBlocking(raw)) {
+      if (millis() - startWait > 1000) {
+        Serial.println();
+        Serial.println(F("[ERROR] HX711 load cell timeout! Check sensor wiring."));
+        return false;
+      }
+      delay(1);
+    }
+    sum += raw;
+    Serial.print(F("."));
+  }
+  avgRawOut = (long)(sum / samples);
+  return true;
+}
+
+/**
+ * Tares load cell by averaging 20 samples and storing tare offset
+ */
+void tareLoadcell() {
+  Serial.print(F("[LOADCELL] Taring (averaging 20 samples)"));
+  long avgRaw = 0;
+  if (!getLoadcellAverage(avgRaw, 20)) {
+    return;
+  }
+  Serial.println(F(" Done!"));
+
+  loadcellTareOffset = avgRaw;
+  loadcellTareInitialized = true;
+  currentRawWeight = avgRaw;
+  loadcellHasReading = true;
+
+  if (fabs(loadcellScale) > 1e-6f) {
+    currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+  } else {
+    currentWeight = 0.0f;
+  }
+
+  saveConfigToEeprom(false);
+
+  Serial.print(F("[LOADCELL] Tared successfully. Offset set to: "));
+  Serial.print(loadcellTareOffset);
+  Serial.println(F(" (Current Weight: 0.00, Saved to EEPROM)"));
+}
+
+/**
+ * Calibrates load cell using a known weight by averaging 20 samples
+ */
+void calibrateLoadcell(float knownWeight) {
+  if (fabs(knownWeight) <= 1e-4f) {
+    Serial.println(F("[ERROR] Known weight must be non-zero! Usage: CAL <weight> (e.g. CAL 100 or CAL 500)"));
+    return;
+  }
+
+  Serial.println(F("\n---------------- LOAD CELL CALIBRATION ----------------"));
+  Serial.print(F("Target Known Weight: "));
+  Serial.print(knownWeight, 2);
+  Serial.println();
+  if (!loadcellTareInitialized || loadcellTareOffset == 0) {
+    Serial.println(F("[TIP] For best accuracy, run 'TARE' with no load before 'CAL'."));
+  }
+  Serial.println(F("Place known weight on the load cell now."));
+  Serial.print(F("Averaging 20 samples"));
+
+  long avgRaw = 0;
+  if (!getLoadcellAverage(avgRaw, 20)) {
+    return;
+  }
+
+  Serial.println(F(" Done!"));
+
+  long rawDelta = avgRaw - loadcellTareOffset;
+  if (labs(rawDelta) < 10) {
+    Serial.println(F("[ERROR] Raw reading unchanged from Tare offset (Delta ~ 0)."));
+    Serial.println(F("        Please place the known weight on the scale and try again."));
+    return;
+  }
+
+  float newScale = (float)rawDelta / knownWeight;
+  loadcellScale = newScale;
+  currentRawWeight = avgRaw;
+  loadcellHasReading = true;
+  currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+
+  saveConfigToEeprom(false);
+
+  Serial.println(F("[LOADCELL] Calibration Successful!"));
+  Serial.print(F("  Raw Average:    "));
+  Serial.println(avgRaw);
+  Serial.print(F("  Tare Offset:    "));
+  Serial.println(loadcellTareOffset);
+  Serial.print(F("  Raw Delta:      "));
+  Serial.println(rawDelta);
+  Serial.print(F("  New Scale:      "));
+  Serial.println(loadcellScale, 4);
+  Serial.print(F("  Current Weight: "));
+  Serial.print(currentWeight, 2);
+  Serial.println(F(" (Saved to EEPROM)"));
+  Serial.println(F("-------------------------------------------------------"));
+}
+
+/**
+ * Interactive prompt when user types CAL without an argument
+ */
+void handleCalibratePrompt() {
+  Serial.println(F("[LOADCELL] Calibration mode"));
+  Serial.println(F("Usage: CAL <weight> (e.g. CAL 100 or CAL 500)"));
+  Serial.print(F("Enter known weight in grams/units (or wait 15s to cancel): "));
+
+  unsigned long startWait = millis();
+  char inputBuf[16];
+  uint8_t inputIdx = 0;
+  bool gotInput = false;
+
+  while (millis() - startWait < 15000) {
+    while (Serial.available() > 0) {
+      char c = (char)Serial.read();
+      if (c == '\r' || c == '\n') {
+        if (inputIdx > 0) {
+          inputBuf[inputIdx] = '\0';
+          gotInput = true;
+          break;
+        }
+      } else if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+        if (inputIdx < sizeof(inputBuf) - 1) {
+          inputBuf[inputIdx++] = c;
+          Serial.print(c);
+        }
+      }
+    }
+    if (gotInput) {
+      break;
+    }
+    delay(5);
+  }
+
+  if (gotInput) {
+    Serial.println();
+    float weight = atof(inputBuf);
+    calibrateLoadcell(weight);
+  } else {
+    Serial.println(F("\n[ERROR] Calibration cancelled (timed out waiting for weight)."));
   }
 }
 
@@ -784,7 +941,10 @@ void printHelp() {
       F("    Show current temperatures, load cell, PI state, PWM and settings."));
   Serial.println(F("  TARE"));
   Serial.println(
-      F("    Zero the load cell (sets current raw reading as tare offset)."));
+      F("    Zero the load cell (averages 20 samples, saved to EEPROM)."));
+  Serial.println(F("  CAL <weight> or SET CAL <weight>"));
+  Serial.println(
+      F("    Calibrate load cell with known weight (averages 20 samples, saves scale factor)."));
   Serial.println(F("  SCALE <val> or SET SCALE <val>"));
   Serial.println(
       F("    Set load cell calibration scale factor (saved to EEPROM)."));
@@ -829,8 +989,9 @@ void printHelp() {
   Serial.println(F("  SET KI <val>     - Set integral gain Ki"));
   Serial.println(F("  SET UMIN <val>   - Set minimum output saturation limit"));
   Serial.println(F("  SET UMAX <val>   - Set maximum output saturation limit"));
+  Serial.println(F("  SET CAL <val>    - Calibrate scale factor using known weight"));
   Serial.println(F("  SET SCALE <val>  - Set load cell calibration scale factor"));
-  Serial.println(F("  SET TARE <val>   - Set raw load cell tare offset manually"));
+  Serial.println(F("  SET TARE [val]   - Zero load cell (or set tare offset manually)"));
   Serial.println(F("  SET TMIN <val>   - Set Temp Min threshold in degC"));
   Serial.println(F("  SET TMAX <val>   - Set Temp Max threshold in degC"));
   Serial.println(F("  SET PMIN <val>   - Set PWM Min (0 - 255)"));
@@ -1009,17 +1170,14 @@ void executeCommand(char *cmd) {
     loadConfigFromEeprom();
     Serial.println(F("[EEPROM] Configuration loaded from EEPROM."));
   } else if (strcasecmp(token, "TARE") == 0) {
-    loadcellTareOffset = currentRawWeight;
-    loadcellTareInitialized = true;
-    if (fabs(loadcellScale) > 1e-6f) {
-      currentWeight = (float)(currentRawWeight - loadcellTareOffset) / loadcellScale;
+    tareLoadcell();
+  } else if (strcasecmp(token, "CAL") == 0 || strcasecmp(token, "CALIBRATE") == 0) {
+    char *val = strtok(NULL, " \t,");
+    if (val) {
+      calibrateLoadcell(atof(val));
     } else {
-      currentWeight = 0.0f;
+      handleCalibratePrompt();
     }
-    saveConfigToEeprom(false);
-    Serial.print(F("[LOADCELL] Tared successfully. Offset set to: "));
-    Serial.print(loadcellTareOffset);
-    Serial.println(F(" (Current Weight: 0.00, Saved to EEPROM)"));
   } else if (strcasecmp(token, "SCALE") == 0) {
     char *val = strtok(NULL, " \t,");
     if (val) {
@@ -1116,9 +1274,22 @@ void executeCommand(char *cmd) {
   } else if (strcasecmp(token, "SET") == 0) {
     char *param = strtok(NULL, " \t,=");
     char *val = strtok(NULL, " \t,=");
-    if (!param || !val) {
+    if (!param) {
       Serial.println(
-          F("[ERROR] Usage: SET <SP|KP|KI|UMIN|UMAX|SCALE|TARE|TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
+          F("[ERROR] Usage: SET <SP|KP|KI|UMIN|UMAX|CAL|SCALE|TARE|TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
+      return;
+    }
+    if (strcasecmp(param, "TARE") == 0 && !val) {
+      tareLoadcell();
+      return;
+    }
+    if ((strcasecmp(param, "CAL") == 0 || strcasecmp(param, "CALIBRATE") == 0) && !val) {
+      handleCalibratePrompt();
+      return;
+    }
+    if (!val) {
+      Serial.println(
+          F("[ERROR] Usage: SET <SP|KP|KI|UMIN|UMAX|CAL|SCALE|TARE|TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
       return;
     }
     if (strcasecmp(param, "SP") == 0 || strcasecmp(param, "SETPOINT") == 0 || strcasecmp(param, "TARGET") == 0) {
@@ -1156,6 +1327,8 @@ void executeCommand(char *cmd) {
       } else {
         stopController(true);
       }
+    } else if (strcasecmp(param, "CAL") == 0 || strcasecmp(param, "CALIBRATE") == 0) {
+      calibrateLoadcell(atof(val));
     } else if (strcasecmp(param, "SCALE") == 0) {
       float newScale = atof(val);
       if (fabs(newScale) > 1e-6f) {
@@ -1217,7 +1390,7 @@ void executeCommand(char *cmd) {
                                     : F("DISABLED (Stopped)"));
     } else {
       Serial.println(
-          F("[ERROR] Unknown parameter. Valid: SP, KP, KI, UMIN, UMAX, SCALE, TARE, TMIN, TMAX, PMIN, PMAX, CYCLES, VERBOSE, REPORT"));
+          F("[ERROR] Unknown parameter. Valid: SP, KP, KI, UMIN, UMAX, CAL, SCALE, TARE, TMIN, TMAX, PMIN, PMAX, CYCLES, VERBOSE, REPORT"));
     }
   } else if (strcasecmp(token, "VERBOSE") == 0) {
     char *arg = strtok(NULL, " \t,");
