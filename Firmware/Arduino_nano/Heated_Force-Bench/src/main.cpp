@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 
 /**
  * Heated Force-Bench Temperature Measurement & Relay Autotuning Protocol
@@ -85,6 +86,27 @@ float cycleValleyTemp = 999.0f;
 // Maximum relay tuning cycles
 const int MAX_STORED_CYCLES = 20;
 
+// PI Closed-Loop Controller Configuration & State
+float piKp = 2.0f;
+float piKi = 0.05f;
+float piUmin = 0.0f;
+float piUmax = 255.0f;
+float piSetpoint = 45.0f; // Target temperature in degC
+bool piControlActive = false;
+float piIntegral = 0.0f;
+
+// EEPROM Persistent Storage Structure
+struct PiConfig {
+  uint32_t magic;      // 0x50494333 ("PIC3")
+  float kp;
+  float ki;
+  float u_min;
+  float u_max;
+};
+
+const uint32_t EEPROM_MAGIC = 0x50494333;
+const int EEPROM_ADDR = 0;
+
 // Serial command buffer
 char serialBuffer[64];
 uint8_t bufferIdx = 0;
@@ -99,6 +121,11 @@ void stopTuning(bool notifyUser);
 void updateTuningStateMachine(float currentTemp);
 void finishTuning();
 float readTemperature(float &voutOut, int &rawAdcOut);
+void updatePiController(float currentTemp);
+void startController();
+void stopController(bool notifyUser = true);
+void saveConfigToEeprom(bool verbose = true);
+void loadConfigFromEeprom();
 
 void setup() {
   // CRITICAL: Set analog reference to EXTERNAL BEFORE any analogRead()
@@ -126,9 +153,12 @@ void setup() {
   int initRaw = 0;
   currentTempC = readTemperature(initVout, initRaw);
 
+  // Load persistent PI controller settings from EEPROM
+  loadConfigFromEeprom();
+
   Serial.println(F("\n=================================================="));
   Serial.println(F("Heated Force-Bench Temperature Controller Ready"));
-  Serial.println(F("Control Loop: 10 Hz | Heater Output: Pin 9"));
+  Serial.println(F("Control Loop: 10 Hz | Closed-Loop PI & Autotune"));
   Serial.println(F("Type 'HELP' or '?' for available commands."));
   Serial.println(F("Telemetry Reporting: OFF by default ('REPORT ON' to enable)"));
   Serial.println(F("=================================================="));
@@ -154,18 +184,26 @@ void loop() {
     float tempC = readTemperature(vout, rawADC);
     currentTempC = tempC;
 
-    // B. Update relay tuning state machine
-    updateTuningStateMachine(tempC);
+    // B. Update closed-loop controllers & tuning
+    if (tuneState != STATE_IDLE) {
+      updateTuningStateMachine(tempC);
+    } else if (piControlActive) {
+      updatePiController(tempC);
+    }
 
     // C. Apply current PWM to pin 9
     analogWrite(PWM_PIN, currentPwm);
 
     // D. 10 Hz Telemetry output (structured $DAT: protocol to separate plot data from logs)
-    if (loggingEnabled || tuneState != STATE_IDLE) {
+    if (loggingEnabled || tuneState != STATE_IDLE || piControlActive) {
       Serial.print(F("$DAT:Temp="));
       Serial.print(tempC, 2); // e.g. 25.40
       Serial.print(F(",PWM="));
       Serial.print(currentPwm);
+      if (piControlActive) {
+        Serial.print(F(",SP="));
+        Serial.print(piSetpoint, 2);
+      }
       if (showVerboseTelemetry) {
         Serial.print(F(",Voltage="));
         Serial.print(vout, 4); // e.g. 0.7540
@@ -326,6 +364,9 @@ void updateTuningStateMachine(float currentTemp) {
  * Start tuning sequence with current parameters
  */
 void startTuning(float currentTemp) {
+  if (piControlActive) {
+    stopController(false);
+  }
   // Validate parameters
   if (tuneTempMax <= tuneTempMin) {
     Serial.println(F("[ERROR] Temp Max must be greater than Temp Min!"));
@@ -432,6 +473,111 @@ void finishTuning() {
 }
 
 /**
+ * PI Closed-Loop Temperature Controller
+ * Features Anti-Windup using Instant Back-Calculation:
+ *   u_P = Kp * error
+ *   u_I = integral
+ *   if ((u_P + u_I) > u_max) { u_I = u_max - u_P; integral = u_I; }
+ *   if ((u_P + u_I) < u_min) { u_I = u_min - u_P; integral = u_I; }
+ */
+void updatePiController(float currentTemp) {
+  if (!piControlActive) {
+    return;
+  }
+
+  float error = piSetpoint - currentTemp;
+  float u_P = piKp * error;
+  piIntegral += piKi * error * 0.1f; // dt = 0.1s (10 Hz control loop)
+  float u_I = piIntegral;
+
+  // Upper saturation
+  if ((u_P + u_I) > piUmax) {
+    u_I = piUmax - u_P;
+    if (u_I < 0.0f) {
+      u_I = 0.0f; // Prevent integral from going negative during heating saturation!
+    }
+    piIntegral = u_I;
+  }
+
+  // Lower saturation
+  if ((u_P + u_I) < piUmin) {
+    u_I = piUmin - u_P;
+    if (u_I > 0.0f) {
+      u_I = 0.0f; // Prevent integral from going positive during cooling saturation!
+    }
+    piIntegral = u_I;
+  }
+
+  float u = u_P + u_I;
+  currentPwm = constrain((int)round(u), (int)round(piUmin), (int)round(piUmax));
+}
+
+void startController() {
+  if (tuneState != STATE_IDLE) {
+    stopTuning(false);
+  }
+  piControlActive = true;
+  piIntegral = 0.0f; // Reset integral accumulator on start
+  Serial.println(F("\n=================================================="));
+  Serial.println(F(">>> PI TEMPERATURE CONTROLLER STARTED <<<"));
+  Serial.print(F("Setpoint (SP): "));
+  Serial.print(piSetpoint, 2);
+  Serial.println(F(" degC"));
+  Serial.print(F("Kp:            "));
+  Serial.println(piKp, 3);
+  Serial.print(F("Ki:            "));
+  Serial.println(piKi, 4);
+  Serial.print(F("U_min:         "));
+  Serial.print(piUmin, 1);
+  Serial.print(F(" | U_max: "));
+  Serial.println(piUmax, 1);
+  Serial.println(F("Anti-windup:   Instant Back-Calculation Active"));
+  Serial.println(F("=================================================="));
+}
+
+void stopController(bool notifyUser) {
+  piControlActive = false;
+  currentPwm = 0;
+  analogWrite(PWM_PIN, 0);
+  piIntegral = 0.0f;
+  if (notifyUser) {
+    Serial.println(F("\n[CONTROL] PI Controller STOPPED. Heater turned OFF (PWM=0)."));
+  }
+}
+
+void saveConfigToEeprom(bool verbose) {
+  PiConfig cfg;
+  cfg.magic = EEPROM_MAGIC;
+  cfg.kp = piKp;
+  cfg.ki = piKi;
+  cfg.u_min = piUmin;
+  cfg.u_max = piUmax;
+  EEPROM.put(EEPROM_ADDR, cfg);
+  if (verbose) {
+    Serial.println(F("[EEPROM] Configuration saved successfully."));
+  }
+}
+
+void loadConfigFromEeprom() {
+  PiConfig cfg;
+  EEPROM.get(EEPROM_ADDR, cfg);
+  if (cfg.magic == EEPROM_MAGIC && !isnan(cfg.kp) && !isnan(cfg.ki) &&
+      !isnan(cfg.u_min) && !isnan(cfg.u_max)) {
+    piKp = cfg.kp;
+    piKi = cfg.ki;
+    piUmin = constrain(cfg.u_min, 0.0f, 255.0f);
+    piUmax = constrain(cfg.u_max, 0.0f, 255.0f);
+  } else {
+    // Defaults
+    piKp = 2.0f;
+    piKi = 0.05f;
+    piUmin = 0.0f;
+    piUmax = 255.0f;
+    saveConfigToEeprom(false);
+  }
+}
+
+/**
  * Prints current controller status
  */
 void printStatus(float currentTemp) {
@@ -442,51 +588,54 @@ void printStatus(float currentTemp) {
   Serial.print(F("Current PWM:  "));
   Serial.print(currentPwm);
   Serial.println(F(" (Pin 9)"));
-  Serial.print(F("Tuning State: "));
-  switch (tuneState) {
-  case STATE_IDLE:
-    Serial.println(F("IDLE"));
-    break;
-  case STATE_PREP_COOL:
-    Serial.println(F("PREPARATION: Cooldown to reach T_min"));
-    break;
-  case STATE_PREP_HEAT:
-    Serial.println(F("PREPARATION: Warmup to reach T_min"));
-    break;
-  case STATE_RELAY_HEAT:
-    Serial.println(F("RELAY: Heating to reach T_max"));
-    break;
-  case STATE_RELAY_COOL:
-    Serial.println(F("RELAY: Cooling to reach T_min"));
-    break;
+  Serial.print(F("Control Mode: "));
+  if (piControlActive) {
+    Serial.println(F("PI CLOSED-LOOP ACTIVE"));
+    Serial.print(F("  Setpoint:   "));
+    Serial.print(piSetpoint, 2);
+    Serial.print(F(" degC (Error: "));
+    Serial.print(piSetpoint - currentTemp, 2);
+    Serial.println(F(" degC)"));
+    Serial.print(F("  u_I (Integ):"));
+    Serial.println(piIntegral, 2);
+  } else if (tuneState != STATE_IDLE) {
+    Serial.println(F("RELAY AUTOTUNING ACTIVE"));
+  } else {
+    Serial.println(F("IDLE (Manual)"));
   }
-  if (tuneState != STATE_IDLE) {
-    Serial.print(F("Progress:     Cycle "));
-    Serial.print(currentCycle);
-    Serial.print(F(" of "));
-    Serial.println(tuneCycles);
-  }
+  Serial.print(F("Current Setpoint: "));
+  Serial.print(piSetpoint, 2);
+  Serial.println(F(" degC"));
+  Serial.println(F("PI Settings (EEPROM):"));
+  Serial.print(F("  Kp:         "));
+  Serial.println(piKp, 3);
+  Serial.print(F("  Ki:         "));
+  Serial.println(piKi, 4);
+  Serial.print(F("  U_min:      "));
+  Serial.println(piUmin, 1);
+  Serial.print(F("  U_max:      "));
+  Serial.println(piUmax, 1);
   Serial.println(F("Tuning Settings:"));
-  Serial.print(F("  T_min:  "));
+  Serial.print(F("  T_min:      "));
   Serial.print(tuneTempMin, 2);
   Serial.println(F(" degC"));
-  Serial.print(F("  T_max:  "));
+  Serial.print(F("  T_max:      "));
   Serial.print(tuneTempMax, 2);
   Serial.println(F(" degC"));
-  Serial.print(F("  PWM_min: "));
+  Serial.print(F("  PWM_min:    "));
   Serial.println(tunePwmMin);
-  Serial.print(F("  PWM_max: "));
+  Serial.print(F("  PWM_max:    "));
   Serial.println(tunePwmMax);
-  Serial.print(F("  Cycles:  "));
+  Serial.print(F("  Cycles:     "));
   Serial.println(tuneCycles);
-  Serial.print(F("  Telemetry: "));
+  Serial.print(F("Telemetry:    "));
   Serial.println(showVerboseTelemetry ? F("Verbose (Temp, PWM, Voltage, RawADC)")
-                                      : F("Default (Temp, PWM only)"));
-  Serial.print(F("  Reporting: "));
+                                      : F("Default (Temp, PWM, SP)"));
+  Serial.print(F("Reporting:    "));
   if (loggingEnabled) {
     Serial.println(F("ENABLED (Streaming at 10 Hz)"));
-  } else if (tuneState != STATE_IDLE) {
-    Serial.println(F("ACTIVE (Autotuning in progress)"));
+  } else if (tuneState != STATE_IDLE || piControlActive) {
+    Serial.println(F("ACTIVE (Streaming control data)"));
   } else {
     Serial.println(F("DISABLED (Default off)"));
   }
@@ -507,30 +656,45 @@ void printHelp() {
   Serial.println(F("    Display this help menu."));
   Serial.println(F("  STATUS"));
   Serial.println(
-      F("    Show current temperatures, state, PWM and parameters."));
+      F("    Show current temperatures, PI state, PWM and parameters."));
+  Serial.println(F("  START [CONTROL|TUNE|REPORT]"));
+  Serial.println(
+      F("    Start closed-loop PI controller, or autotuning, or reporting."));
+  Serial.println(F("  STOP [CONTROL|TUNE|REPORT]"));
+  Serial.println(
+      F("    Stop PI controller / autotuning & shut heater OFF."));
+  Serial.println(F("  CONTROL [ON/OFF|1/0] or PI [ON/OFF|1/0]"));
+  Serial.println(
+      F("    Start or stop closed-loop PI temperature controller."));
+  Serial.println(F("  SP <temp> or SETPOINT <temp>"));
+  Serial.println(
+      F("    Set target temperature in degC (Runtime setting)."));
+  Serial.println(F("  KP <val> / KI <val>"));
+  Serial.println(
+      F("    Set PI proportional / integral gain (saved to EEPROM)."));
+  Serial.println(F("  UMIN <val> / UMAX <val>"));
+  Serial.println(
+      F("    Set output PWM saturation limits 0 - 255 (saved to EEPROM)."));
+  Serial.println(F("  SAVE / LOAD"));
+  Serial.println(
+      F("    Manually save or reload PI parameters to / from EEPROM."));
   Serial.println(F("  TUNE <t_min> <t_max> <pwm_min> <pwm_max> <cycles>"));
   Serial.println(
       F("    Configure parameters and start relay tuning immediately."));
-  Serial.println(F("    (Telemetry reporting is automatically active during tuning)"));
-  Serial.println(F("    Example: TUNE 40 50 0 255 3"));
-  Serial.println(F("  START [REPORT|LOG]"));
-  Serial.println(
-      F("    Start relay tuning, or 'START REPORT' to enable telemetry stream."));
-  Serial.println(F("  STOP [REPORT|LOG]"));
-  Serial.println(
-      F("    Cancel tuning & heater OFF, or 'STOP REPORT' to stop telemetry."));
   Serial.println(F("  REPORT [ON/OFF|ENABLE/DISABLE|START/STOP|1/0]"));
   Serial.println(
       F("    Start, stop, or toggle 10 Hz status telemetry reporting (Default: OFF)."));
-  Serial.println(F("  ENABLE [REPORT|LOG] / DISABLE [REPORT|LOG]"));
-  Serial.println(
-      F("    Enable or disable 10 Hz telemetry stream."));
   Serial.println(F("  PWM <val>"));
   Serial.println(
-      F("    Set manual PWM (0 - 255) on pin 9 (aborts active tuning)."));
+      F("    Set manual PWM (0 - 255) on pin 9 (aborts active closed-loop)."));
   Serial.println(F("  VERBOSE [ON/OFF]"));
   Serial.println(
-      F("    Toggle Voltage & Raw ADC in telemetry (Default: OFF, Temp & PWM only)."));
+      F("    Toggle Voltage & Raw ADC in telemetry stream."));
+  Serial.println(F("  SET SP <val>     - Set target setpoint in degC"));
+  Serial.println(F("  SET KP <val>     - Set proportional gain Kp"));
+  Serial.println(F("  SET KI <val>     - Set integral gain Ki"));
+  Serial.println(F("  SET UMIN <val>   - Set minimum output saturation limit"));
+  Serial.println(F("  SET UMAX <val>   - Set maximum output saturation limit"));
   Serial.println(F("  SET TMIN <val>   - Set Temp Min threshold in degC"));
   Serial.println(F("  SET TMAX <val>   - Set Temp Max threshold in degC"));
   Serial.println(F("  SET PMIN <val>   - Set PWM Min (0 - 255)"));
@@ -540,16 +704,11 @@ void printHelp() {
   Serial.println(F("  SET REPORT <1/0> - Enable/disable telemetry reporting"));
   Serial.println(
       F("--------------------------------------------------------------"));
-  Serial.println(F("TUNING PROTOCOL BEHAVIOR:"));
+  Serial.println(F("ANTI-WINDUP PROTOCOL:"));
   Serial.println(
-      F("  1. If Current Temp > T_min -> Cool down with PWM_min to T_min."));
+      F("  Instant back-calculation clamps integral accumulation when"));
   Serial.println(
-      F("     If Current Temp < T_min -> Heat up with PWM_max to T_min."));
-  Serial.println(F("  2. Upon crossing T_min -> Start relay cycles:"));
-  Serial.println(
-      F("     Heat with PWM_max to T_max, then cool with PWM_min to T_min."));
-  Serial.println(
-      F("  3. Repeats N times and safely shuts off heater."));
+      F("  actuator saturates at U_max or U_min to eliminate overshoot lag."));
   Serial.println(
       F("=============================================================="));
 }
@@ -601,8 +760,23 @@ void executeCommand(char *cmd) {
                 strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0)) {
       loggingEnabled = false;
       Serial.println(F("[REPORT] Telemetry reporting STOPPED (10 Hz stream disabled)"));
-    } else {
+    } else if (arg && (strcasecmp(arg, "CONTROL") == 0 || strcasecmp(arg, "PI") == 0)) {
+      stopController(true);
+    } else if (arg && (strcasecmp(arg, "TUNE") == 0 || strcasecmp(arg, "TUNING") == 0)) {
       stopTuning(true);
+    } else {
+      // Generic STOP: stop whichever closed-loop mode is active
+      if (piControlActive) {
+        stopController(true);
+      }
+      if (tuneState != STATE_IDLE) {
+        stopTuning(true);
+      }
+      if (!piControlActive && tuneState == STATE_IDLE) {
+        currentPwm = 0;
+        analogWrite(PWM_PIN, 0);
+        Serial.println(F("[MANUAL] Heater turned OFF (PWM=0)."));
+      }
     }
   } else if (strcasecmp(token, "START") == 0) {
     char *arg = strtok(NULL, " \t,");
@@ -610,9 +784,94 @@ void executeCommand(char *cmd) {
                 strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0)) {
       loggingEnabled = true;
       Serial.println(F("[REPORT] Telemetry reporting STARTED (10 Hz stream enabled)"));
-    } else {
+    } else if (arg && (strcasecmp(arg, "TUNE") == 0 || strcasecmp(arg, "TUNING") == 0)) {
       startTuning(currentTemp);
+    } else {
+      // Default START: start PI closed-loop controller
+      startController();
     }
+  } else if (strcasecmp(token, "CONTROL") == 0 || strcasecmp(token, "PI") == 0) {
+    char *arg = strtok(NULL, " \t,");
+    if (!arg) {
+      if (piControlActive) {
+        stopController(true);
+      } else {
+        startController();
+      }
+    } else if (strcasecmp(arg, "ON") == 0 || strcasecmp(arg, "START") == 0 ||
+               strcasecmp(arg, "ENABLE") == 0 || strcmp(arg, "1") == 0) {
+      startController();
+    } else if (strcasecmp(arg, "OFF") == 0 || strcasecmp(arg, "STOP") == 0 ||
+               strcasecmp(arg, "DISABLE") == 0 || strcmp(arg, "0") == 0) {
+      stopController(true);
+    } else {
+      Serial.println(F("[ERROR] Usage: CONTROL [ON/OFF|1/0] or START CONTROL / STOP CONTROL"));
+    }
+  } else if (strcasecmp(token, "SP") == 0 || strcasecmp(token, "SETPOINT") == 0) {
+    char *val = strtok(NULL, " \t,");
+    if (val) {
+      piSetpoint = atof(val);
+      Serial.print(F("[CONFIG] Setpoint set to: "));
+      Serial.print(piSetpoint, 2);
+      Serial.println(F(" degC"));
+    } else {
+      Serial.print(F("[CONFIG] Current Setpoint: "));
+      Serial.print(piSetpoint, 2);
+      Serial.println(F(" degC"));
+    }
+  } else if (strcasecmp(token, "KP") == 0) {
+    char *val = strtok(NULL, " \t,");
+    if (val) {
+      piKp = atof(val);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] Kp set to: "));
+      Serial.print(piKp, 3);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else {
+      Serial.print(F("[CONFIG] Current Kp: "));
+      Serial.println(piKp, 3);
+    }
+  } else if (strcasecmp(token, "KI") == 0) {
+    char *val = strtok(NULL, " \t,");
+    if (val) {
+      piKi = atof(val);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] Ki set to: "));
+      Serial.print(piKi, 4);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else {
+      Serial.print(F("[CONFIG] Current Ki: "));
+      Serial.println(piKi, 4);
+    }
+  } else if (strcasecmp(token, "UMIN") == 0) {
+    char *val = strtok(NULL, " \t,");
+    if (val) {
+      piUmin = constrain(atof(val), 0.0f, piUmax);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] U_min set to: "));
+      Serial.print(piUmin, 1);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else {
+      Serial.print(F("[CONFIG] Current U_min: "));
+      Serial.println(piUmin, 1);
+    }
+  } else if (strcasecmp(token, "UMAX") == 0) {
+    char *val = strtok(NULL, " \t,");
+    if (val) {
+      piUmax = constrain(atof(val), piUmin, 255.0f);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] U_max set to: "));
+      Serial.print(piUmax, 1);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else {
+      Serial.print(F("[CONFIG] Current U_max: "));
+      Serial.println(piUmax, 1);
+    }
+  } else if (strcasecmp(token, "SAVE") == 0) {
+    saveConfigToEeprom(true);
+  } else if (strcasecmp(token, "LOAD") == 0) {
+    loadConfigFromEeprom();
+    Serial.println(F("[EEPROM] Configuration loaded from EEPROM."));
   } else if (strcasecmp(token, "ENABLE") == 0) {
     char *arg = strtok(NULL, " \t,");
     if (!arg || strcasecmp(arg, "REPORT") == 0 || strcasecmp(arg, "REPORTING") == 0 ||
@@ -682,10 +941,45 @@ void executeCommand(char *cmd) {
     char *val = strtok(NULL, " \t,=");
     if (!param || !val) {
       Serial.println(
-          F("[ERROR] Usage: SET <TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
+          F("[ERROR] Usage: SET <SP|KP|KI|UMIN|UMAX|TMIN|TMAX|PMIN|PMAX|CYCLES|VERBOSE|REPORT> <value>"));
       return;
     }
-    if (strcasecmp(param, "TMIN") == 0) {
+    if (strcasecmp(param, "SP") == 0 || strcasecmp(param, "SETPOINT") == 0 || strcasecmp(param, "TARGET") == 0) {
+      piSetpoint = atof(val);
+      Serial.print(F("[CONFIG] Setpoint set to: "));
+      Serial.print(piSetpoint, 2);
+      Serial.println(F(" degC"));
+    } else if (strcasecmp(param, "KP") == 0) {
+      piKp = atof(val);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] Kp set to: "));
+      Serial.print(piKp, 3);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else if (strcasecmp(param, "KI") == 0) {
+      piKi = atof(val);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] Ki set to: "));
+      Serial.print(piKi, 4);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else if (strcasecmp(param, "UMIN") == 0) {
+      piUmin = constrain(atof(val), 0.0f, piUmax);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] U_min set to: "));
+      Serial.print(piUmin, 1);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else if (strcasecmp(param, "UMAX") == 0) {
+      piUmax = constrain(atof(val), piUmin, 255.0f);
+      saveConfigToEeprom(false);
+      Serial.print(F("[CONFIG] U_max set to: "));
+      Serial.print(piUmax, 1);
+      Serial.println(F(" (Saved to EEPROM)"));
+    } else if (strcasecmp(param, "CONTROL") == 0 || strcasecmp(param, "PI") == 0) {
+      if (atoi(val) != 0 || strcasecmp(val, "ON") == 0 || strcasecmp(val, "START") == 0 || strcasecmp(val, "TRUE") == 0) {
+        startController();
+      } else {
+        stopController(true);
+      }
+    } else if (strcasecmp(param, "TMIN") == 0) {
       tuneTempMin = atof(val);
       Serial.print(F("[CONFIG] Temp Min set to: "));
       Serial.print(tuneTempMin, 2);
@@ -722,7 +1016,7 @@ void executeCommand(char *cmd) {
                                     : F("DISABLED (Stopped)"));
     } else {
       Serial.println(
-          F("[ERROR] Unknown parameter. Valid: TMIN, TMAX, PMIN, PMAX, CYCLES, VERBOSE, REPORT (or LOG)"));
+          F("[ERROR] Unknown parameter. Valid: SP, KP, KI, UMIN, UMAX, TMIN, TMAX, PMIN, PMAX, CYCLES, VERBOSE, REPORT"));
     }
   } else if (strcasecmp(token, "VERBOSE") == 0) {
     char *arg = strtok(NULL, " \t,");
@@ -739,6 +1033,7 @@ void executeCommand(char *cmd) {
     char *val = strtok(NULL, " \t,");
     if (val) {
       stopTuning(false);
+      stopController(false);
       currentPwm = constrain(atoi(val), 0, 255);
       analogWrite(PWM_PIN, currentPwm);
       Serial.print(F("[MANUAL] PWM set to: "));

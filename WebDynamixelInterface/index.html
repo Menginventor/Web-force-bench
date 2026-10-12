@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Dynamixel Interface - Smart Actuator Controller & Telemetry</title>
+  <meta name="description" content="Next-generation browser interface for Robotis Dynamixel smart actuators using native Web Serial API. Control position, speed, torque, scan bus, and view real-time telemetry.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-logo-icon">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-title">WEB DYNAMIXEL INTERFACE</h1>
+        <div class="brand-subtitle">ROBOTIS SMART ACTUATOR CONTROLLER & PROTOCOL ANALYZER</div>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <a href="../WebSerialMonitorPlotter/" class="nav-link-btn" title="Go to Serial Monitor & Real-Time Plotter">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+        </svg>
+        Serial Monitor & Plotter
+      </a>
+
+      <div class="status-badge" id="connStatusBadge">
+        <span class="status-dot"></span>
+        <span id="connStatusText">DISCONNECTED</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="app-container">
+
+    <!-- ====================================================================
+         LEFT COLUMN: Hardware Connection & Bus Scanner
+         ==================================================================== -->
+    <aside class="glass-panel panel-left">
+      <div class="panel-header">
+        <span class="panel-title">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+          SERIAL CONNECTION
+        </span>
+      </div>
+
+      <!-- Port Selection -->
+      <div class="form-group">
+        <label class="form-label" for="portSelect">
+          <span>PORT</span>
+          <button class="btn-secondary" id="btnRequestPort" style="padding: 2px 8px; font-size: 0.72rem;">PAIR PORT</button>
+        </label>
+        <select id="portSelect" class="input-select">
+          <option value="">No Port Selected</option>
+        </select>
+      </div>
+
+      <!-- Baud Rate -->
+      <div class="form-group">
+        <label class="form-label" for="baudSelect">BAUD RATE</label>
+        <select id="baudSelect" class="input-select">
+          <option value="1000000" selected>1,000,000 bps (1 Mbps - X-Series/MX)</option>
+          <option value="57600">57,600 bps (AX-12A Default)</option>
+          <option value="115200">115,200 bps (Arduino Bridge)</option>
+          <option value="2000000">2,000,000 bps (2 Mbps)</option>
+          <option value="3000000">3,000,000 bps (3 Mbps)</option>
+          <option value="4500000">4,500,000 bps (4.5 Mbps)</option>
+          <option value="9600">9,600 bps (Legacy)</option>
+        </select>
+      </div>
+
+      <!-- Protocol Selection -->
+      <div class="form-group">
+        <label class="form-label" for="protocolSelect">PROTOCOL</label>
+        <select id="protocolSelect" class="input-select">
+          <option value="2.0" selected>Protocol 2.0 (X-Series: XL, XM, XC, PRO)</option>
+          <option value="1.0">Protocol 1.0 (AX-12A, AX-18A, MX v1)</option>
+          <option value="ascii">ASCII Bridge Mode (Arduino / Text CLI)</option>
+        </select>
+      </div>
+
+      <!-- Connect Button -->
+      <button class="btn-primary" id="btnConnect">CONNECT HARDWARE</button>
+
+      <!-- Device Info Pill -->
+      <div class="device-info-pill" id="deviceInfoPill">
+        <span>DEVICE: NONE</span>
+        <span id="vidPidLabel">VID: -- | PID: --</span>
+      </div>
+
+      <!-- ================= BUS SCANNER ================= -->
+      <div class="panel-header" style="margin-top: 8px;">
+        <span class="panel-title">
+          <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          BUS SCANNER
+        </span>
+      </div>
+
+      <div class="scan-range-row">
+        <div class="form-group">
+          <label class="form-label" for="scanStartId">START ID</label>
+          <input type="number" id="scanStartId" class="input-text" value="1" min="1" max="253">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="scanEndId">END ID</label>
+          <input type="number" id="scanEndId" class="input-text" value="15" min="1" max="253">
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="btn-accent" id="btnScanBus" style="flex: 1;" disabled>SCAN BUS</button>
+        <button class="btn-secondary" id="btnPingBroadcast" title="Ping Broadcast ID 0xFE (P2.0)" disabled>PING ALL</button>
+      </div>
+
+      <div class="progress-container">
+        <div class="progress-bar" id="scanProgressBar"></div>
+      </div>
+
+      <!-- Discovered Servos -->
+      <label class="form-label">
+        <span>DETECTED SERVOS (<span id="discoveredCount">0</span>)</span>
+        <button class="btn-secondary" id="btnAddManualId" style="padding: 2px 6px; font-size: 0.7rem;">+ MANUAL ID</button>
+      </label>
+
+      <div class="servo-list" id="discoveredServoList">
+        <div style="font-size: 0.78rem; color: var(--text-dim); text-align: center; padding: 20px 0;">
+          No servos discovered yet.<br>Click "SCAN BUS" to search IDs.
+        </div>
+      </div>
+    </aside>
+
+    <!-- ====================================================================
+         CENTER COLUMN: Active Servo Controller & Horn Dial
+         ==================================================================== -->
+    <section class="glass-panel panel-center">
+      <!-- Active Servo Bar -->
+      <div class="active-servo-header">
+        <div class="servo-tag-id">
+          <span style="color: var(--accent-cyan);">SERVO ID:</span>
+          <span id="activeIdDisplay">1</span>
+          <span class="servo-model-badge" id="activeModelDisplay">XL430-W250</span>
+        </div>
+        <div class="servo-protocol-tag" id="activeProtocolBadge">PROTOCOL 2.0</div>
+      </div>
+
+      <!-- Rotary Horn Dial -->
+      <div class="rotary-dial-container" id="rotaryDialContainer">
+        <svg class="rotary-svg" id="rotarySvg" viewBox="0 0 260 260">
+          <!-- Background track circle -->
+          <circle cx="130" cy="130" r="105" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="14" />
+          <!-- Active angle arc -->
+          <path id="svgArcActive" d="" fill="none" stroke="url(#arcGradient)" stroke-width="14" stroke-linecap="round" />
+          
+          <!-- Outer tick marks -->
+          <g id="svgTicks" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"></g>
+
+          <!-- Servo Horn Arm (Present Position) -->
+          <g id="svgPresentArm" transform="rotate(0 130 130)">
+            <line x1="130" y1="130" x2="130" y2="40" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" />
+            <circle cx="130" cy="40" r="7" fill="#0284c7" stroke="#38bdf8" stroke-width="2" />
+          </g>
+
+          <!-- Goal Position Target Pointer -->
+          <g id="svgGoalArm" transform="rotate(0 130 130)">
+            <line x1="130" y1="130" x2="130" y2="30" stroke="#f43f5e" stroke-width="2" stroke-dasharray="3,3" />
+            <polygon points="130,22 125,32 135,32" fill="#f43f5e" />
+          </g>
+
+          <!-- Center hub -->
+          <circle cx="130" cy="130" r="42" fill="#0f172a" stroke="rgba(255,255,255,0.15)" stroke-width="2" />
+
+          <!-- Gradients -->
+          <defs>
+            <linearGradient id="arcGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#0284c7" />
+              <stop offset="100%" stop-color="#38bdf8" />
+            </linearGradient>
+          </defs>
+        </svg>
+
+        <div class="dial-center-readout">
+          <span class="dial-angle-val" id="dialAngleText">180.0°</span>
+          <span class="dial-ticks-val" id="dialTicksText">2048 TICKS</span>
+        </div>
+      </div>
+
+      <!-- Quick Angles -->
+      <div class="quick-angles-bar">
+        <button class="quick-angle-btn" data-angle="0">0°</button>
+        <button class="quick-angle-btn" data-angle="45">45°</button>
+        <button class="quick-angle-btn" data-angle="90">90°</button>
+        <button class="quick-angle-btn" data-angle="150">150° (Center P1)</button>
+        <button class="quick-angle-btn" data-angle="180">180° (Center P2)</button>
+        <button class="quick-angle-btn" data-angle="270">270°</button>
+        <button class="quick-angle-btn" data-angle="300">300° (Max P1)</button>
+        <button class="quick-angle-btn" data-angle="360">360°</button>
+      </div>
+
+      <!-- Switches: Torque & LED -->
+      <div class="switches-row">
+        <div class="switch-card">
+          <div>
+            <div class="switch-label-title">TORQUE ENABLE</div>
+            <div class="switch-label-desc" id="torqueStateLabel">Motor Free (Off)</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggleTorque">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="switch-card">
+          <div>
+            <div class="switch-label-title">ONBOARD LED</div>
+            <div class="switch-label-desc" id="ledStateLabel">LED Off</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggleLed">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Goal Position Slider -->
+      <div class="slider-group">
+        <div class="slider-header">
+          <span>GOAL POSITION</span>
+          <span class="slider-val-readout" id="sliderPosReadout">2048 (180.0°)</span>
+        </div>
+        <input type="range" id="sliderPosition" class="range-slider" min="0" max="4095" value="2048">
+      </div>
+
+      <!-- Velocity / Moving Speed Slider -->
+      <div class="slider-group">
+        <div class="slider-header">
+          <span>PROFILE VELOCITY / SPEED</span>
+          <span class="slider-val-readout" id="sliderVelReadout">200 ticks/s</span>
+        </div>
+        <input type="range" id="sliderVelocity" class="range-slider" min="0" max="1023" value="200">
+      </div>
+
+      <!-- Torque Limit / Goal Current Slider -->
+      <div class="slider-group">
+        <div class="slider-header">
+          <span>TORQUE LIMIT / CURRENT</span>
+          <span class="slider-val-readout" id="sliderTorqueLimitReadout">800 ticks</span>
+        </div>
+        <input type="range" id="sliderTorqueLimit" class="range-slider" min="0" max="1023" value="800">
+      </div>
+
+      <!-- Live Telemetry HUD -->
+      <div class="telemetry-grid">
+        <div class="telemetry-box">
+          <div class="telemetry-box-label">POSITION</div>
+          <div class="telemetry-box-val" id="hudPosVal">--</div>
+          <div class="telemetry-box-unit" id="hudPosDeg">--°</div>
+        </div>
+
+        <div class="telemetry-box">
+          <div class="telemetry-box-label">VELOCITY</div>
+          <div class="telemetry-box-val" id="hudVelVal">--</div>
+          <div class="telemetry-box-unit">RPM / rev/min</div>
+        </div>
+
+        <div class="telemetry-box">
+          <div class="telemetry-box-label">LOAD / CURRENT</div>
+          <div class="telemetry-box-val" id="hudLoadVal">--</div>
+          <div class="telemetry-box-unit">mA / %</div>
+        </div>
+
+        <div class="telemetry-box">
+          <div class="telemetry-box-label">TEMPERATURE</div>
+          <div class="telemetry-box-val" id="hudTempVal">--</div>
+          <div class="telemetry-box-unit">°C</div>
+        </div>
+      </div>
+
+      <!-- Voltage & Status Alerts -->
+      <div class="telemetry-grid" style="grid-template-columns: 1fr 1fr;">
+        <div class="telemetry-box">
+          <div class="telemetry-box-label">INPUT VOLTAGE</div>
+          <div class="telemetry-box-val" id="hudVoltVal">-- V</div>
+          <div class="telemetry-box-unit">Optimal: 11.1 - 12.6V</div>
+        </div>
+
+        <div class="telemetry-box">
+          <div class="telemetry-box-label">HARDWARE ERROR / STATUS</div>
+          <div class="telemetry-box-val" id="hudErrorVal" style="color: var(--accent-emerald); font-size: 0.85rem;">NORMAL</div>
+          <div class="telemetry-box-unit" id="hudMovingVal">STOPPED</div>
+        </div>
+      </div>
+
+      <!-- Quick Maintenance Actions -->
+      <div style="display: flex; gap: 8px;">
+        <button class="btn-secondary" id="btnRebootServo" style="flex: 1;">REBOOT SERVO</button>
+        <button class="btn-danger" id="btnEmergencyStop" style="flex: 1;">EMERGENCY STOP</button>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         RIGHT COLUMN: Tabs (Scope Plotter, Sequencer, Packet Inspector)
+         ==================================================================== -->
+    <aside class="glass-panel panel-right">
+      <!-- Tabs Navigation -->
+      <nav class="tabs-nav">
+        <button class="tab-btn active" data-tab="tab-scope">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
+          LIVE SCOPE
+        </button>
+        <button class="tab-btn" data-tab="tab-sequencer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+          SWEEP / SINE TEST
+        </button>
+        <button class="tab-btn" data-tab="tab-packets">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-5 14H4v-4h11v4zm0-5H4V9h11v4zm5 5h-4V9h4v9z"/></svg>
+          PACKET INSPECTOR
+        </button>
+      </nav>
+
+      <!-- TAB 1: Live Scope Plotter -->
+      <div class="tab-content active" id="tab-scope">
+        <div class="scope-canvas-wrapper">
+          <canvas id="scopeCanvas" class="scope-canvas"></canvas>
+        </div>
+
+        <div class="scope-controls-row">
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn-secondary" id="btnScopePause" style="padding: 6px 12px; font-size: 0.78rem;">PAUSE</button>
+            <button class="btn-secondary" id="btnScopeClear" style="padding: 6px 12px; font-size: 0.78rem;">CLEAR</button>
+            <button class="btn-secondary" id="btnScopeExportCsv" style="padding: 6px 12px; font-size: 0.78rem;">EXPORT CSV</button>
+          </div>
+
+          <div style="font-size: 0.75rem; color: var(--text-dim); display: flex; gap: 12px;">
+            <span style="color: #f43f5e;">■ Target (Goal)</span>
+            <span style="color: #38bdf8;">■ Actual (Present)</span>
+            <span style="color: #f59e0b;">■ Load/Current</span>
+          </div>
+        </div>
+
+        <!-- Telemetry Polling Rate -->
+        <div class="form-group" style="margin-top: 8px;">
+          <label class="form-label" for="pollRateSelect">
+            <span>TELEMETRY POLLING FREQUENCY</span>
+            <span id="pollFpsLabel" style="font-family: var(--font-mono); color: var(--accent-cyan);">10 Hz</span>
+          </label>
+          <select id="pollRateSelect" class="input-select">
+            <option value="100">10 Hz (Default - Smooth)</option>
+            <option value="50">20 Hz (High Speed)</option>
+            <option value="20">50 Hz (Ultra Fast)</option>
+            <option value="200">5 Hz (Low Bandwidth)</option>
+            <option value="0">Off (Manual Query Only)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- TAB 2: Sweep & Sine Motion Generator -->
+      <div class="tab-content" id="tab-sequencer">
+        <div class="sequencer-card">
+          <div style="font-weight: 700; font-size: 0.9rem; color: var(--accent-cyan);">
+            SINE OSCILLATOR / SWEEP BENCHMARK
+          </div>
+          <div style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4;">
+            Continuously sweeps the servo back and forth between two angle limits using a smooth sinusoidal or triangular velocity profile. Ideal for testing torque stability, thermal heating, and response tracking.
+          </div>
+
+          <div class="scan-range-row">
+            <div class="form-group">
+              <label class="form-label" for="sweepMinAngle">MIN ANGLE (°)</label>
+              <input type="number" id="sweepMinAngle" class="input-text" value="60" min="0" max="360">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sweepMaxAngle">MAX ANGLE (°)</label>
+              <input type="number" id="sweepMaxAngle" class="input-text" value="240" min="0" max="360">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="sweepFreq">FREQUENCY (Hz) / SPEED</label>
+            <input type="range" id="sweepFreq" class="range-slider" min="0.1" max="2.0" step="0.05" value="0.5">
+            <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-dim);">
+              <span>0.1 Hz (Slow)</span>
+              <span id="sweepFreqReadout" style="color: #fff; font-weight: 700;">0.50 Hz</span>
+              <span>2.0 Hz (Fast)</span>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="btn-accent" id="btnStartSweep" style="flex: 1;">START SWEEP</button>
+            <button class="btn-danger" id="btnStopSweep" style="flex: 1;" disabled>STOP SWEEP</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: Low-Level Packet Inspector -->
+      <div class="tab-content" id="tab-packets">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-secondary);">RAW TX / RX STREAM</span>
+          <button class="btn-secondary" id="btnClearPackets" style="padding: 2px 8px; font-size: 0.7rem;">CLEAR</button>
+        </div>
+
+        <div class="packet-log" id="packetLogBox">
+          <div class="packet-line">
+            <span class="pkt-time">[00:00:00.000]</span>
+            <span class="pkt-desc">Packet monitor initialized. Waiting for serial data...</span>
+          </div>
+        </div>
+
+        <!-- Custom Packet Builder -->
+        <div style="font-weight: 700; font-size: 0.82rem; color: var(--text-secondary); margin-top: 4px;">
+          CUSTOM PACKET GENERATOR
+        </div>
+
+        <div class="packet-builder-grid">
+          <div class="form-group">
+            <label class="form-label" for="pktIdInput">ID</label>
+            <input type="number" id="pktIdInput" class="input-text" value="1" min="0" max="254">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pktInstSelect">INST</label>
+            <select id="pktInstSelect" class="input-select">
+              <option value="1">PING (0x01)</option>
+              <option value="2">READ (0x02)</option>
+              <option value="3">WRITE (0x03)</option>
+              <option value="8">REBOOT (0x08)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pktAddrInput">ADDR</label>
+            <input type="number" id="pktAddrInput" class="input-text" value="64">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pktValInput">VALUE</label>
+            <input type="number" id="pktValInput" class="input-text" value="1">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-primary" id="btnSendCustomPkt" style="flex: 1;">BUILD & SEND PACKET</button>
+        </div>
+
+        <!-- Manual Hex String Sender -->
+        <div class="form-group" style="margin-top: 4px;">
+          <label class="form-label" for="hexRawInput">RAW HEX STRING</label>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="hexRawInput" class="input-text" placeholder="e.g. FF FF 01 04 03 18 01 DE" style="font-family: var(--font-mono); font-size: 0.78rem;">
+            <button class="btn-secondary" id="btnSendRawHex">SEND HEX</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- Scripts -->
+  <script src="protocol.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

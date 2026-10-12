@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Force Bench | Serial Monitor & Plotter</title>
+  <meta name="description" content="Modern browser-based Web Serial monitor and real-time plotter with custom Regex parser and USB/Bluetooth port filtering.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Navigation / Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-badge">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+        </div>
+        <div>
+          <h1 class="app-title">Web Force Bench <span class="badge">Serial & Plotter</span></h1>
+          <p class="app-subtitle">Hardware USB/Bluetooth Telemetry, Inspection & Real-time Graphing</p>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <a href="../WebDynamixelInterface/" class="btn btn-outline" style="text-decoration: none; padding: 6px 12px; font-size: 0.8rem; border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; display: inline-flex; align-items: center; gap: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 13h2v6h-2zm0 8h2v2h-2z"/>
+          </svg>
+          Dynamixel Interface
+        </a>
+        <div id="apiSupportBadge" class="badge-status checking">
+          <span class="status-dot"></span>
+          <span id="apiSupportText">Checking Web Serial...</span>
+        </div>
+        <div id="connectionStatusBadge" class="badge-status disconnected">
+          <span class="status-dot"></span>
+          <span id="connectionStatusText">Disconnected</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="main-layout">
+      <!-- Left Column: Controls & Device Information -->
+      <aside class="sidebar-panel">
+        <!-- Connection Card -->
+        <div class="card glass-card">
+          <div class="card-header">
+            <h2>Port Connection</h2>
+          </div>
+          <div class="card-body">
+            <!-- Port Selection Dropdown & Pair Button -->
+            <div class="form-group">
+              <label for="comPortSelect">Select Serial / COM Port</label>
+              <div class="port-select-row">
+                <select id="comPortSelect">
+                  <option value="" disabled selected>No port selected (Click Pair/Add)</option>
+                </select>
+                <button id="btnPairNewPort" class="btn btn-outline btn-pair" title="Grant browser permission to a COM Port">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  <span>Pair</span>
+                </button>
+              </div>
+              <span class="helper-text" id="portListHint">Select a paired port or click Pair to add one.</span>
+            </div>
+
+            <!-- Port Type Filter Checkboxes (USB & Bluetooth) -->
+            <div class="form-group">
+              <label>Port Filter</label>
+              <div class="filter-checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="filterUsbCheck" checked>
+                  <span class="custom-checkbox"></span>
+                  <span class="checkbox-text">USB Serial Devices</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="filterBluetoothCheck" checked>
+                  <span class="custom-checkbox"></span>
+                  <span class="checkbox-text">Bluetooth Serial Links</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="baudRateSelect">Baud Rate</label>
+              <div class="select-wrapper">
+                <select id="baudRateSelect">
+                  <option value="9600">9600</option>
+                  <option value="19200">19200</option>
+                  <option value="38400">38400</option>
+                  <option value="57600">57600</option>
+                  <option value="115200" selected>115200</option>
+                  <option value="230400">230400</option>
+                  <option value="460800">460800</option>
+                  <option value="921600">921600</option>
+                  <option value="custom">Custom...</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group hidden" id="customBaudGroup">
+              <label for="customBaudInput">Custom Baud Rate</label>
+              <input type="number" id="customBaudInput" placeholder="e.g. 250000" min="300" max="4000000">
+            </div>
+
+            <div class="connection-actions">
+              <button id="btnConnect" class="btn btn-primary" disabled>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+                Connect
+              </button>
+              <button id="btnDisconnect" class="btn btn-danger" disabled>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                Disconnect
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Device Info Card (VID / PID & Port Type Display) -->
+        <div class="card glass-card">
+          <div class="card-header">
+            <h2>Device Information</h2>
+            <span id="portTypeBadge" class="info-tag">Unconnected</span>
+          </div>
+          <div class="card-body">
+            <div class="info-grid">
+              <div class="info-item">
+                <span class="info-label">Vendor ID (VID)</span>
+                <span id="vidValue" class="info-value hex-badge">--</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Product ID (PID)</span>
+                <span id="pidValue" class="info-value hex-badge">--</span>
+              </div>
+            </div>
+
+            <div class="device-extra-details">
+              <div class="info-row">
+                <span class="row-label">Port Category:</span>
+                <span id="detectedPortCategory" class="row-value muted">None</span>
+              </div>
+              <div class="info-row">
+                <span class="row-label">Identified Device:</span>
+                <span id="deviceGuess" class="row-value muted">None</span>
+              </div>
+              <div class="info-row">
+                <span class="row-label">Port State:</span>
+                <span id="portState" class="row-value muted">Closed</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Plotter & Regex Extraction Settings -->
+        <div class="card glass-card">
+          <div class="card-header">
+            <h2>Plotter Regex Parser</h2>
+            <span class="badge-accent">Data Extractor</span>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label for="regexPresetSelect">Regex Preset</label>
+              <select id="regexPresetSelect">
+                <option value="telemetry" selected>Auto-Telemetry ($DAT: / Key-Value)</option>
+                <option value="numbers">Numbers Only (Space/Comma/Tab separated)</option>
+                <option value="keyvalue">Generic Key-Value Pairs</option>
+                <option value="custom">Custom Regex Pattern...</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="customRegexGroup">
+              <label for="customRegexInput">Custom Regex Pattern</label>
+              <input type="text" id="customRegexInput" value="[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?" spellcheck="false">
+              <span class="helper-text">Regex finds all matching numeric capture groups or values.</span>
+            </div>
+
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="plotWindowSelect">Buffer Size</label>
+                <select id="plotWindowSelect">
+                  <option value="50">50 points</option>
+                  <option value="100" selected>100 points</option>
+                  <option value="200">200 points</option>
+                  <option value="500">500 points</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="plotYRangeSelect">Y-Axis Scale</label>
+                <select id="plotYRangeSelect">
+                  <option value="auto" selected>Auto Scaling</option>
+                  <option value="fixed_100">0 to 100</option>
+                  <option value="fixed_1000">0 to 1,000</option>
+                  <option value="fixed_5000">0 to 5,000</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Serial Transmission Options -->
+        <div class="card glass-card">
+          <div class="card-header">
+            <h2>Serial Protocol</h2>
+          </div>
+          <div class="card-body">
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="dataBitsSelect">Data Bits</label>
+                <select id="dataBitsSelect">
+                  <option value="8" selected>8 bits</option>
+                  <option value="7">7 bits</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="stopBitsSelect">Stop Bits</label>
+                <select id="stopBitsSelect">
+                  <option value="1" selected>1 bit</option>
+                  <option value="2">2 bits</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="paritySelect">Parity</label>
+                <select id="paritySelect">
+                  <option value="none" selected>None</option>
+                  <option value="even">Even</option>
+                  <option value="odd">Odd</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="flowControlSelect">Flow Control</label>
+                <select id="flowControlSelect">
+                  <option value="none" selected>None</option>
+                  <option value="hardware">RTS/CTS</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right Column: Tabs for Serial Plotter and Terminal -->
+      <section class="main-content-panel glass-card">
+        <!-- Tab Bar -->
+        <div class="view-tabs">
+          <button id="tabBtnPlotter" class="view-tab-btn active">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+            </svg>
+            <span>Real-time Plotter</span>
+          </button>
+          <button id="tabBtnTerminal" class="view-tab-btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            <span>Serial Terminal</span>
+          </button>
+          <button id="tabBtnSplit" class="view-tab-btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+            </svg>
+            <span>Split View</span>
+          </button>
+
+          <div class="view-tab-actions">
+            <div id="plotChannelsLegend" class="channels-legend">
+              <!-- Dynamically populated series legend badges -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Split / Tab Content Container -->
+        <div id="viewsWrapper" class="views-wrapper mode-plotter">
+          <!-- Plotter Section -->
+          <div id="plotterSection" class="view-pane plotter-pane">
+            <div class="plotter-toolbar">
+              <div class="plotter-meta">
+                <span class="meta-label">Channels detected:</span>
+                <span id="channelCountBadge" class="meta-badge">0</span>
+                <span class="meta-label">Latest:</span>
+                <span id="latestValuesBadge" class="meta-badge-values">--</span>
+              </div>
+              <div class="plotter-controls">
+                <label class="toggle-control" id="splitYAxisWrapper" title="Split Y-Axis: Available only when exactly 2 signals are selected">
+                  <input type="checkbox" id="splitYAxisCheck" disabled>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label" id="splitYAxisLabel">Split Y-Axis (2 Ch)</span>
+                </label>
+                <button id="btnRecordCsv" class="btn btn-sm btn-outline btn-record-csv" title="Start/Stop recording live plot data to CSV">
+                  <span class="rec-dot"></span>
+                  <span id="btnRecordCsvText">Record CSV</span>
+                </button>
+                <button id="btnExportPlotCsv" class="btn btn-sm btn-outline" title="Export current buffered plot points as CSV">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                  <span>Export CSV</span>
+                </button>
+                <label class="toggle-control">
+                  <input type="checkbox" id="pausePlotCheck">
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">Pause Plot</span>
+                </label>
+                <button id="btnClearPlot" class="btn btn-sm btn-outline" title="Clear plot buffers">
+                  Reset Plot
+                </button>
+              </div>
+            </div>
+
+            <!-- Canvas for High-Performance Chart Rendering -->
+            <div class="canvas-container">
+              <canvas id="plotterCanvas"></canvas>
+            </div>
+          </div>
+
+          <!-- Terminal Section -->
+          <div id="terminalSection" class="view-pane terminal-pane">
+            <div class="terminal-toolbar">
+              <div class="terminal-title">
+                <span>Console Logs</span>
+              </div>
+
+              <div class="terminal-actions">
+                <label class="toggle-control" title="Filter high-frequency plot stream ($DAT:) from console to keep logs clean and readable">
+                  <input type="checkbox" id="filterPlotInTerminalCheck" checked>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">Filter Plots</span>
+                </label>
+                <label class="toggle-control">
+                  <input type="checkbox" id="autoscrollCheck" checked>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">Autoscroll</span>
+                </label>
+                <label class="toggle-control">
+                  <input type="checkbox" id="timestampsCheck" checked>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">Timestamps</span>
+                </label>
+                <label class="toggle-control">
+                  <input type="checkbox" id="hexViewCheck">
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">HEX</span>
+                </label>
+                <button id="btnClearTerminal" class="btn btn-sm btn-outline" title="Clear console output">
+                  Clear
+                </button>
+                <button id="btnExportLog" class="btn btn-sm btn-outline" title="Save logs to text file">
+                  Export
+                </button>
+              </div>
+            </div>
+
+            <!-- Terminal Output Viewport -->
+            <div id="terminalContainer" class="terminal-container">
+              <div class="terminal-welcome">
+                <p>Web Force Bench Serial Console ready.</p>
+                <p class="terminal-hint">Streams are parsed simultaneously for terminal printing and graph plotting.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Terminal Input Bar (Always accessible at bottom) -->
+        <div class="terminal-input-bar">
+          <div class="input-line-ending">
+            <select id="lineEndingSelect" title="Select Line Ending to append">
+              <option value="\r\n">Both NL & CR (\r\n)</option>
+              <option value="\n" selected>Newline (\n)</option>
+              <option value="\r">Carriage Return (\r)</option>
+              <option value="">No Line Ending</option>
+            </select>
+          </div>
+          <input type="text" id="serialInput" placeholder="Type serial command to send (e.g. TARE, START)..." disabled autocomplete="off">
+          <button id="btnSend" class="btn btn-primary" disabled>
+            <span>Send</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer Stats -->
+    <footer class="app-footer">
+      <div class="stat-group">
+        <span class="stat-label">Rx Bytes:</span>
+        <span id="rxBytesCount" class="stat-value">0 B</span>
+      </div>
+      <div class="stat-group">
+        <span class="stat-label">Tx Bytes:</span>
+        <span id="txBytesCount" class="stat-value">0 B</span>
+      </div>
+      <div class="stat-group">
+        <span class="stat-label">Plot Points:</span>
+        <span id="plotPointsCount" class="stat-value">0</span>
+      </div>
+      <div class="stat-group">
+        <span class="stat-label">Packets:</span>
+        <span id="packetsCount" class="stat-value">0</span>
+      </div>
+      <div class="footer-meta">
+        <span>Ready for GitHub Pages deployment (Client-side Web Serial)</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
