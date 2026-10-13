@@ -1226,6 +1226,25 @@ class UnifiedForceBenchApp {
     }
   }
 
+  /**
+   * Explicitly reads fresh Present Position (Addr 132, 4 bytes) directly from motor hardware.
+   * Updates motorPresentTicks and motion display before any motion command executes,
+   * preventing runaway from out-of-sync or stale coordinates.
+   */
+  async readPresentPosition() {
+    if (!this.isMotorConnected) return this.motorPresentTicks || 0;
+    try {
+      const res = await this.readMotorMemory(132, 4);
+      if (res && res.params && res.params.length === 4) {
+        this.motorPresentTicks = DXL.bytesToInt(res.params, true);
+        this.updateMotionDisplay();
+      }
+    } catch (e) {
+      console.warn("readPresentPosition query error:", e);
+    }
+    return this.motorPresentTicks || 0;
+  }
+
   setSoftwareZero() {
     this.softwareZeroOffsetTicks = this.motorPresentTicks;
     const rawMm = this.ticksToLinearMm(this.motorPresentTicks);
@@ -1327,12 +1346,11 @@ class UnifiedForceBenchApp {
     // Fixed incremental step in ticks (4096 ticks = 1 mm)
     const deltaTicks = Math.round(deltaMm * this.TICKS_PER_MM);
 
-    // Align discrete coordinate tracker with present position if needed
-    if (this.commandedPositionTicks === null || this.commandedPositionTicks === undefined) {
-      this.commandedPositionTicks = this.motorPresentTicks;
-    }
+    // 1. Read fresh current position directly from motor hardware before jogging to prevent runaway
+    const liveTicks = await this.readPresentPosition();
 
-    this.commandedPositionTicks += deltaTicks;
+    // 2. Base the jog target strictly on the live actual physical position
+    this.commandedPositionTicks = liveTicks + deltaTicks;
     const targetMm = this.commandedPositionTicks / this.TICKS_PER_MM;
 
     // Send Goal Position (Address 116, 4 bytes signed int32)
@@ -1340,7 +1358,7 @@ class UnifiedForceBenchApp {
     const posPkt = DXL.buildPacketP2(this.motorActiveId, DXL.INST.WRITE, [116, 0, ...posBytes]);
     await this.sendMotorPacket(posPkt, `JOG ${deltaMm >= 0 ? '+' : ''}${deltaMm} mm`);
 
-    this.log("MOTOR", `Jog ${deltaMm >= 0 ? '+' : ''}${deltaMm} mm → Target: ${targetMm >= 0 ? '+' : ''}${targetMm.toFixed(2)} mm (${this.commandedPositionTicks} ticks @ Vmax ${this.CURRENT_SPEED_MM_S} mm/s)`, "motor");
+    this.log("MOTOR", `Jog ${deltaMm >= 0 ? '+' : ''}${deltaMm} mm from ${this.ticksToLinearMm(liveTicks).toFixed(2)} mm → Target: ${targetMm >= 0 ? '+' : ''}${targetMm.toFixed(2)} mm (${this.commandedPositionTicks} ticks @ Vmax ${this.CURRENT_SPEED_MM_S} mm/s)`, "motor");
   }
 
   /**
@@ -1348,7 +1366,7 @@ class UnifiedForceBenchApp {
    * Continuously moves the goal forward/reverse as long as the user keeps pressing button.
    * Eliminates the need for a stop button and prevents counter-rotation jerk.
    */
-  startContinuousJogStream(direction) {
+  async startContinuousJogStream(direction) {
     if (!this.isMotorConnected) {
       alert("Please connect U2D2 motor port first.");
       return;
@@ -1356,16 +1374,19 @@ class UnifiedForceBenchApp {
     this.stopContinuousJogStream();
 
     if (!this.motorTorqueEnabled) {
-      this.setMotorTorque(true);
+      await this.setMotorTorque(true);
     }
+
+    // Read fresh current position from motor hardware before starting continuous jog stream
+    const liveTicks = await this.readPresentPosition();
 
     const dir = direction >= 0 ? 1 : -1;
     this.continuousJogDirection = dir;
     this.motorIsContinuousMoving = true;
     this.updateContinuousUI(dir > 0 ? "JOGGING FWD (+)" : "JOGGING REV (-)");
 
-    // Ensure commanded coordinate tracks current present ticks
-    this.commandedPositionTicks = this.motorPresentTicks;
+    // Ensure commanded coordinate tracks live present ticks
+    this.commandedPositionTicks = liveTicks;
 
     const INTERVAL_MS = 40; // 25 Hz streaming
     this.continuousJogTimer = setInterval(() => {
@@ -1406,8 +1427,27 @@ class UnifiedForceBenchApp {
     return this.startContinuousJogStream(direction);
   }
 
+  async stopAutomatedTestMotion() {
+    if (!this.isMotorConnected) return;
+
+    // Clear any pending queued packets so STOP executes immediately with highest priority
+    this.motorTxQueue = [];
+
+    // Command Goal Position (Address 116) to current motorPresentTicks to clamp motion
+    const stopTicks = this.motorPresentTicks;
+    this.commandedPositionTicks = stopTicks;
+    const posBytes = DXL.intToBytes(stopTicks, 4);
+    const posPkt = DXL.buildPacketP2(this.motorActiveId, DXL.INST.WRITE, [116, 0, ...posBytes]);
+    await this.sendMotorPacket(posPkt, "SAFETY STOP: CLAMP GOAL TO PRESENT POSITION");
+
+    this.log("MOTOR", `Safety stop executed: Actuator motion halted at ${this.ticksToLinearMm(stopTicks).toFixed(2)} mm (${stopTicks} ticks)`, "motor");
+  }
+
   async stopMotionSmoothly() {
-    return this.stopContinuousJogStream();
+    this.stopContinuousJogStream();
+    if (this.isTestRunning) {
+      await this.stopAutomatedTestMotion();
+    }
   }
 
   async haltMotion(preferredDir = null) {
@@ -2027,8 +2067,9 @@ class UnifiedForceBenchApp {
       await new Promise(r => setTimeout(r, 600));
     }
 
-    // 2. Record initial linear position
-    this.testStartMm = this.ticksToLinearMm(this.motorPresentTicks);
+    // 2. Record initial linear position - read fresh live position directly from hardware
+    const liveStartTicks = await this.readPresentPosition();
+    this.testStartMm = this.ticksToLinearMm(liveStartTicks);
 
     // 3. Ensure Mode 4 and set test velocity with smooth acceleration profile
     await this.ensureExtendedPositionMode();
@@ -2124,11 +2165,13 @@ class UnifiedForceBenchApp {
     }
 
     // Safety force limit check
-    if (forceAbsN >= this.testMaxForceLimitN) {
-      this.log("TEST", `⚠️ SAFETY FORCE LIMIT REACHED (${forceAbsN.toFixed(2)} N >= ${this.testMaxForceLimitN} N)! Auto-stopping smoothly...`, "err");
-      const sign = (this.testDirection === "pull") ? 1 : -1;
-      this.stopMotionSmoothly(sign);
-      this.finishTestSequence(true);
+    if (forceAbsN >= this.testMaxForceLimitN && this.isTestRunning) {
+      this.isTestRunning = false;
+      this.log("TEST", `⚠️ SAFETY FORCE LIMIT REACHED (${forceAbsN.toFixed(2)} N >= ${this.testMaxForceLimitN} N)! Stopping motor immediately...`, "err");
+      this.stopAutomatedTestMotion().then(() => {
+        this.finishTestSequence(true);
+      });
+      return;
     }
   }
 
@@ -2139,6 +2182,11 @@ class UnifiedForceBenchApp {
     this.el.badgeTestState.className = safetyStopped ? "badge-purple" : "badge-emerald";
     if (this.el.rowTestButtons) this.el.rowTestButtons.style.display = "grid";
     if (this.el.btnAbortTest) this.el.btnAbortTest.style.display = "none";
+
+    // Guarantee motor is stopped immediately at current position if safety limit triggered
+    if (safetyStopped) {
+      await this.stopAutomatedTestMotion();
+    }
 
     // Calculate metrics
     this.computeTestCharacterization();
@@ -2160,16 +2208,15 @@ class UnifiedForceBenchApp {
     this.log("TEST", `✓ Test sequence finished. Recorded ${this.testDataPoints.length} mechanical data points.`, "test");
   }
 
-  abortTestSequence() {
+  async abortTestSequence() {
     this.isTestRunning = false;
-    const sign = (this.testDirection === "pull") ? 1 : -1;
-    this.stopMotionSmoothly(sign);
+    await this.stopAutomatedTestMotion();
     this.el.dispTestPhase.textContent = "ABORTED";
     this.el.badgeTestState.textContent = "TEST: ABORTED";
     this.el.badgeTestState.className = "badge-purple";
     if (this.el.rowTestButtons) this.el.rowTestButtons.style.display = "grid";
     if (this.el.btnAbortTest) this.el.btnAbortTest.style.display = "none";
-    this.log("TEST", "Push/Pull test ABORTED by user (Smoothly stopped without counter-rotation).", "err");
+    this.log("TEST", "Push/Pull test ABORTED by user: Motor stopped immediately at present position.", "err");
     this.computeTestCharacterization();
     this.el.btnExportCsv.disabled = (this.testDataPoints.length === 0);
   }
