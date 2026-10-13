@@ -118,7 +118,7 @@ class UnifiedForceBenchApp {
     this.initCanvasPlots();
     this.startPlotAnimationLoop();
     this.updateUsbPillDisplays();
-    this.log("SYS", "Unified Force-Bench Application initialized. Ready to connect ports.", "bench");
+    this.log("SYS", "Heated Force Bench initialized. Ready to connect ports.", "bench");
   }
 
   // --------------------------------------------------------------------------
