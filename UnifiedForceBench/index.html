@@ -15,59 +15,38 @@
 </head>
 <body>
 
-  <!-- Top Global Header -->
-  <header class="app-header">
-    <div class="brand-group">
-      <div class="brand-icon">
+  <!-- Thin Global Header -->
+  <header class="app-header thin-header">
+    <div class="brand-group-compact">
+      <div class="brand-icon-sm">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       </div>
-      <div>
-        <div class="brand-title">UNIFIED FORCE-BENCH CONTROLLER</div>
-        <div class="brand-sub">Dual-Device Web Serial: U2D2 Lead-Screw Axis + Arduino Heated Loadcell Suite</div>
+      <span class="brand-title-compact">UNIFIED FORCE-BENCH CONTROLLER</span>
+
+      <!-- Fast Status Indicators in Header -->
+      <div class="nav-status-group">
+        <button class="nav-status-pill" id="pillNavMotor" title="Click to open U2D2 / Dynamixel connection setup">
+          <span class="nav-dot" id="dotNavMotor"></span>
+          <span>U2D2 AXIS</span>
+        </button>
+        <button class="nav-status-pill" id="pillNavArduino" title="Click to open Arduino Loadcell Bench connection setup">
+          <span class="nav-dot" id="dotNavArduino"></span>
+          <span>ARDUINO BENCH</span>
+        </button>
       </div>
     </div>
 
-    <!-- Dual Web Serial Ports Bar -->
-    <div class="header-ports-row">
-      <!-- Port 1: U2D2 Dynamixel Motor -->
-      <div class="port-card" id="cardMotorPort">
-        <div class="port-header">
-          <span class="port-indicator" id="indMotor"></span>
-          <span class="port-name">PORT 1: U2D2 DYNAMIXEL</span>
-        </div>
-        <div class="port-controls">
-          <select id="motorBaudSelect" class="port-select">
-            <option value="57600" selected>57,600 baud</option>
-            <option value="115200">115,200 baud</option>
-            <option value="1000000">1,000,000 baud</option>
-            <option value="2000000">2,000,000 baud</option>
-          </select>
-          <input type="number" id="motorIdInput" class="port-input" value="1" min="1" max="253" title="Actuator ID" style="width: 50px;">
-          <button id="btnConnectMotor" class="btn-primary-sm">CONNECT U2D2</button>
-        </div>
-      </div>
+    <!-- Right Header Actions (Above Right Column/Tab): System Config Gear & Master Emergency Stop -->
+    <div class="header-right-actions">
+      <button id="btnSystemConfig" class="btn-system-config" title="System Hardware Configuration & USB Port Connections">
+        <span class="gear-icon">⚙️</span>
+        <span>SYSTEM CONFIG</span>
+      </button>
 
-      <!-- Port 2: Arduino Heated Force Bench -->
-      <div class="port-card" id="cardArduinoPort">
-        <div class="port-header">
-          <span class="port-indicator" id="indArduino"></span>
-          <span class="port-name">PORT 2: ARDUINO BENCH</span>
-        </div>
-        <div class="port-controls">
-          <select id="arduinoBaudSelect" class="port-select">
-            <option value="115200" selected>115,200 baud</option>
-            <option value="57600">57,600 baud</option>
-            <option value="9600">9,600 baud</option>
-          </select>
-          <button id="btnConnectArduino" class="btn-primary-sm">CONNECT ARDUINO</button>
-        </div>
-      </div>
-
-      <!-- Master Emergency Stop -->
-      <button id="btnEmergencyStop" class="btn-estop" title="Immediately Disarm Motor Torque and Shut Off Heater PWM">
+      <button id="btnEmergencyStop" class="btn-estop-compact" title="Immediately Disarm Motor Torque and Shut Off Heater PWM">
         <span>🛑</span>
         <span>E-STOP</span>
       </button>
@@ -80,133 +59,119 @@
     <!-- Left Column: Lead Screw Axis Motion Controller -->
     <section class="panel-column motion-column">
       
-      <!-- Lead Screw Configuration Specs -->
+      <!-- Live Linear Position Readout -->
       <div class="glass-box highlight-box">
         <div class="box-title-row">
-          <span class="box-title">LEAD SCREW AXIS (1 REV = 1 MM)</span>
-          <span class="badge-emerald" id="badgeTorqueState">TORQUE: OFF</span>
-        </div>
-        <div class="lead-spec-grid">
-          <div class="spec-item">
-            <span class="spec-label">LEAD PITCH</span>
-            <span class="spec-val">1.0 mm / rev</span>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="box-title">CURRENT POSITION</span>
+            <span class="badge-emerald" id="badgeTorqueState">TORQUE: OFF</span>
           </div>
-          <div class="spec-item">
-            <span class="spec-label">ENCODER SCALE</span>
-            <span class="spec-val">4096 ticks / mm</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button id="btnSoftwareZero" class="btn-icon-text" title="Software Set 0: Offset display and logging to 0.00 mm without sending packets to Dynamixel">🎯 SET 0</button>
+            <button id="btnClearSoftwareZero" class="btn-icon-subtle" title="Clear software offset back to hardware absolute position" style="display: none;">✕</button>
           </div>
-          <div class="spec-item">
-            <span class="spec-label">ACTUATOR ID</span>
-            <span class="spec-val" id="dispActiveId">ID 1 (XL430)</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Live Linear Position Readout -->
-      <div class="glass-box">
-        <div class="box-title-row">
-          <span class="box-title">CURRENT LINEAR DISPLACEMENT</span>
-          <button id="btnSyncMotor" class="btn-icon-text" title="Sync Mode & Torque with Motor">🔄 SYNC</button>
         </div>
         <div class="position-hero">
           <div class="pos-main" id="dispLinearMm">+0.00 mm</div>
           <div class="pos-sub">
             <span id="dispRevs">0.00 Revs</span> &bull;
             <span id="dispTicks">0 ticks</span>
+            <span id="dispSoftwareOffsetNote" style="display: none; color: var(--accent-cyan); font-weight: 600; margin-left: 6px;">(Offset: +0.00 mm)</span>
           </div>
         </div>
       </div>
 
-      <!-- Selectable Linear Speed in mm/s -->
-      <div class="glass-box">
-        <div class="box-title-row">
-          <span class="box-title">SELECTABLE JOG SPEED (MM / S)</span>
-          <span class="val-pill" id="dispCurrentSpeed">1.0 mm/s (60 RPM)</span>
-        </div>
-        <div class="speed-preset-grid">
-          <button class="speed-btn" data-speed="0.2">0.2 mm/s</button>
-          <button class="speed-btn" data-speed="0.5">0.5 mm/s</button>
-          <button class="speed-btn active" data-speed="1.0">1.0 mm/s</button>
-          <button class="speed-btn" data-speed="2.0">2.0 mm/s</button>
-          <button class="speed-btn" data-speed="5.0">5.0 mm/s</button>
-          <button class="speed-btn" data-speed="10.0">10 mm/s</button>
-        </div>
-        <div class="custom-speed-row">
-          <label for="inputCustomSpeed">Custom Speed:</label>
-          <input type="number" id="inputCustomSpeed" class="input-dark" value="1.0" min="0.1" max="25" step="0.1" style="width: 80px;">
-          <span>mm/s</span>
-          <button id="btnApplyCustomSpeed" class="btn-subtle">APPLY</button>
-        </div>
-      </div>
-
-      <!-- Incremental Jog Controls (Relative to Current Position) -->
-      <div class="glass-box">
-        <div class="box-title-row">
-          <span class="box-title">STEP JOG (INCREMENTAL MM)</span>
-          <span class="box-sub">Adds/subtracts from current mm position</span>
+      <!-- Jog Controls (Preset Distance Steps & Continuous Hold at Vmax) -->
+      <div class="glass-box collapsible-card">
+        <div class="box-title-row card-collapse-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="box-title">JOG</span>
+            <span class="val-pill" id="dispContinuousState">STOPPED</span>
+            <span class="val-pill" id="dispCurrentSpeed" title="Click to configure Jog Speed (Vmax)" style="cursor: pointer;">Vmax: 1.0 mm/s</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button id="btnOpenSpeedModal" class="btn-icon-subtle btn-gear-icon" title="Configure Jog Speed (Vmax)"><span class="gear-icon">⚙️</span></button>
+            <button class="btn-card-toggle" title="Collapse / Expand Setting">▾</button>
+          </div>
         </div>
         
-        <div class="jog-section-label">FORWARD (+) &rarr;</div>
-        <div class="jog-grid">
-          <button class="jog-pill jog-fwd" data-jog="0.1">+0.1 mm</button>
-          <button class="jog-pill jog-fwd" data-jog="0.5">+0.5 mm</button>
-          <button class="jog-pill jog-fwd" data-jog="1.0">+1.0 mm</button>
-          <button class="jog-pill jog-fwd" data-jog="5.0">+5.0 mm</button>
-          <button class="jog-pill jog-fwd" data-jog="10.0">+10 mm</button>
-        </div>
+        <div class="card-collapsible-body">
+          <!-- Incremental Step Distance -->
+          <div class="form-row">
+            <label for="inputCustomJogStep" style="font-size: 0.74rem; font-weight: 700; color: var(--text-dim);">STEP DISTANCE (MM):</label>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <input type="number" id="inputCustomJogStep" class="input-dark" value="1.0" min="0.01" max="100" step="0.1" style="flex: 1; font-weight: 700; font-size: 0.88rem; padding: 6px 10px;">
+              <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary);">mm</span>
+            </div>
+          </div>
 
-        <div class="jog-section-label">&larr; REVERSE (-)</div>
-        <div class="jog-grid">
-          <button class="jog-pill jog-rev" data-jog="-0.1">-0.1 mm</button>
-          <button class="jog-pill jog-rev" data-jog="-0.5">-0.5 mm</button>
-          <button class="jog-pill jog-rev" data-jog="-1.0">-1.0 mm</button>
-          <button class="jog-pill jog-rev" data-jog="-5.0">-5.0 mm</button>
-          <button class="jog-pill jog-rev" data-jog="-10.0">-10 mm</button>
-        </div>
-      </div>
+          <div class="quick-preset-row" style="grid-template-columns: repeat(5, 1fr); margin-top: 6px;">
+            <button class="preset-btn jog-step-preset" data-step="0.1">0.1 mm</button>
+            <button class="preset-btn jog-step-preset" data-step="0.5">0.5 mm</button>
+            <button class="preset-btn jog-step-preset active" data-step="1.0">1.0 mm</button>
+            <button class="preset-btn jog-step-preset" data-step="5.0">5.0 mm</button>
+            <button class="preset-btn jog-step-preset" data-step="10.0">10 mm</button>
+          </div>
 
-      <!-- Continuous Move (Fast Forward & Rewind) -->
-      <div class="glass-box">
-        <div class="box-title-row">
-          <span class="box-title">CONTINUOUS MOVE (FIXED SPEED)</span>
-          <span class="val-pill" id="dispContSpeed">@ 1.0 mm/s</span>
-        </div>
-        <div class="continuous-btn-group">
-          <button id="btnFastRewind" class="btn-continuous btn-rewind" title="Continuous Move Reverse at current speed">
-            <span>◀◀</span>
-            <span>FAST REWIND</span>
-          </button>
-          <button id="btnHaltMotion" class="btn-continuous btn-halt" title="Immediately Stop Motor">
-            <span>■</span>
-            <span>STOP</span>
-          </button>
-          <button id="btnFastForward" class="btn-continuous btn-forward" title="Continuous Move Forward at current speed">
-            <span>▶▶</span>
-            <span>FAST FORWARD</span>
-          </button>
+          <div class="dual-btn-row" style="margin-top: 8px;">
+            <button id="btnCustomJogRev" class="btn-step-rev" title="Jog reverse (-) by selected distance step">
+              <span>◀</span>
+              <span>STEP &minus;</span>
+            </button>
+            <button id="btnCustomJogFwd" class="btn-step-fwd" title="Jog forward (+) by selected distance step">
+              <span>▶</span>
+              <span>STEP +</span>
+            </button>
+          </div>
+
+          <!-- Continuous Hold-to-Jog at Vmax -->
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px; margin-bottom: 6px;">
+            <div style="height: 1px; flex: 1; background: var(--border);"></div>
+            <span style="font-size: 0.68rem; font-weight: 700; color: var(--text-dim); letter-spacing: 0.05em;">CONTINUOUS (PRESS &amp; HOLD)</span>
+            <div style="height: 1px; flex: 1; background: var(--border);"></div>
+          </div>
+
+          <div class="continuous-btn-group" style="grid-template-columns: 1fr 1fr;">
+            <button id="btnContinuousRev" class="btn-continuous btn-rewind" title="Hold button to continuously advance target reverse (-) at Vmax. Release to stop immediately.">
+              <span>◀◀</span>
+              <span>REV (-)</span>
+            </button>
+            <button id="btnContinuousFwd" class="btn-continuous btn-forward" title="Hold button to continuously advance target forward (+) at Vmax. Release to stop immediately.">
+              <span>▶▶</span>
+              <span>FWD (+)</span>
+            </button>
+          </div>
+          <div style="font-size: 0.65rem; color: var(--text-dim); margin-top: 5px; text-align: center;">
+            Press &amp; hold to stream motion at Vmax. Release to stop immediately.
+          </div>
         </div>
       </div>
 
       <!-- Origin & Multi-Turn Encoder Tools -->
-      <div class="glass-box">
-        <div class="box-title">ORIGIN & HARDWARE TOOLS</div>
-        <div class="tools-btn-grid">
-          <button id="btnResetEncoder" class="btn-tool btn-tool-purple" title="Execute Protocol 2.0 Clear (0x10) instruction to zero multi-turn encoder at current location">
-            <span>🔄</span>
-            <span>RESET ENCODER (0 MM)</span>
-          </button>
-          <button id="btnGotoOrigin" class="btn-tool" title="Rotate carriage directly to 0.0 mm origin">
-            <span>📍</span>
-            <span>GOTO 0.0 MM</span>
-          </button>
-          <button id="btnToggleTorque" class="btn-tool" title="Arm or Disarm Motor Torque">
-            <span>⚡</span>
-            <span id="labelToggleTorque">ARM TORQUE</span>
-          </button>
-          <button id="btnHomingOffset" class="btn-tool" title="Read current actuator hardware registers">
-            <span>📋</span>
-            <span>READ REGS</span>
-          </button>
+      <div class="glass-box collapsible-card">
+        <div class="box-title-row card-collapse-header">
+          <span class="box-title">ORIGIN & HARDWARE TOOLS</span>
+          <button class="btn-card-toggle" title="Collapse / Expand Setting">▾</button>
+        </div>
+        <div class="card-collapsible-body">
+          <div class="tools-btn-grid">
+            <button id="btnResetEncoder" class="btn-tool btn-tool-purple" title="Execute Protocol 2.0 Clear (0x10) instruction to zero multi-turn encoder at current location">
+              <span>🔄</span>
+              <span>RESET ENCODER (0 MM)</span>
+            </button>
+            <button id="btnGotoOrigin" class="btn-tool" title="Rotate carriage directly to 0.0 mm origin">
+              <span>📍</span>
+              <span>GOTO 0.0 MM</span>
+            </button>
+            <button id="btnToggleTorque" class="btn-tool" title="Arm or Disarm Motor Torque">
+              <span>⚡</span>
+              <span id="labelToggleTorque">ARM TORQUE</span>
+            </button>
+            <button id="btnHomingOffset" class="btn-tool" title="Read current actuator hardware registers">
+              <span>📋</span>
+              <span>READ REGS</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -216,7 +181,7 @@
     <section class="panel-column plot-column">
       
       <!-- Subplot 1: Temperature vs Time -->
-      <div class="plot-card">
+      <div class="plot-card" id="cardPlotTemp">
         <div class="plot-card-header">
           <div class="plot-title-group">
             <span class="plot-dot dot-cyan"></span>
@@ -226,15 +191,16 @@
             <span class="plot-stat" id="statLiveTemp">TEMP: --.- &deg;C</span>
             <span class="plot-stat" id="statLiveSp">SP: --.- &deg;C</span>
             <span class="plot-stat" id="statPeakTemp">PEAK: --.- &deg;C</span>
+            <button class="btn-card-toggle" title="Collapse / Expand Subplot" data-target="cardPlotTemp">▾</button>
           </div>
         </div>
         <div class="canvas-wrapper">
-          <canvas id="canvasTempPlot" height="180"></canvas>
+          <canvas id="canvasTempPlot"></canvas>
         </div>
       </div>
 
       <!-- Subplot 2: Force / Weight vs Time -->
-      <div class="plot-card">
+      <div class="plot-card" id="cardPlotForce">
         <div class="plot-card-header">
           <div class="plot-title-group">
             <span class="plot-dot dot-emerald"></span>
@@ -244,15 +210,16 @@
             <button id="btnToggleUnits" class="btn-unit-toggle" title="Toggle between Newtons (N) and Kilograms (kg)">UNIT: NEWTON (N)</button>
             <span class="plot-stat" id="statLiveForce">FORCE: 0.000 N</span>
             <span class="plot-stat" id="statPeakForce">PEAK: 0.000 N</span>
+            <button class="btn-card-toggle" title="Collapse / Expand Subplot" data-target="cardPlotForce">▾</button>
           </div>
         </div>
         <div class="canvas-wrapper">
-          <canvas id="canvasForcePlot" height="180"></canvas>
+          <canvas id="canvasForcePlot"></canvas>
         </div>
       </div>
 
       <!-- Subplot 3: Push / Pull Test (Force vs Displacement) -->
-      <div class="plot-card reserved-plot-card">
+      <div class="plot-card reserved-plot-card" id="cardPlotPushPull">
         <div class="plot-card-header">
           <div class="plot-title-group">
             <span class="plot-dot dot-purple"></span>
@@ -262,10 +229,11 @@
             <span class="badge-purple" id="badgeTestState">TEST: READY</span>
             <span class="plot-stat" id="statTestPeak">PEAK: -- N @ -- mm</span>
             <span class="plot-stat" id="statTestStiffness">STIFFNESS: -- N/mm</span>
+            <button class="btn-card-toggle" title="Collapse / Expand Subplot" data-target="cardPlotPushPull">▾</button>
           </div>
         </div>
         <div class="canvas-wrapper">
-          <canvas id="canvasPushPullPlot" height="230"></canvas>
+          <canvas id="canvasPushPullPlot"></canvas>
         </div>
       </div>
 
@@ -274,156 +242,317 @@
     <!-- Right Column: Thermal Chamber & Automated Push/Pull Runner -->
     <section class="panel-column controls-column">
 
-      <!-- Thermal Chamber & PI Heater Control -->
-      <div class="glass-box">
-        <div class="box-title-row">
-          <span class="box-title">THERMAL CHAMBER & PI HEATER</span>
-          <span class="val-pill" id="dispHeaterState">HEATER: OFF</span>
-        </div>
-
-        <div class="chamber-grid">
-          <div class="chamber-stat-box">
-            <span class="stat-box-title">CURRENT TEMP</span>
-            <span class="stat-box-val" id="dispChamberTemp">--.- &deg;C</span>
-          </div>
-          <div class="chamber-stat-box">
-            <span class="stat-box-title">HEATER PWM</span>
-            <span class="stat-box-val" id="dispChamberPwm">0 / 255</span>
+      <!-- Heatplate Control -->
+      <div class="glass-box collapsible-card">
+        <div class="box-title-row card-collapse-header">
+          <span class="box-title">HEATPLATE</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="val-pill" id="dispHeaterState">HEATER: OFF</span>
+            <button class="btn-card-toggle" title="Collapse / Expand Setting">▾</button>
           </div>
         </div>
 
-        <!-- Target Setpoint Input & Presets -->
-        <div class="form-row">
-          <label for="inputTempSetpoint">TARGET SETPOINT (&deg;C):</label>
-          <div style="display: flex; gap: 6px; flex: 1;">
-            <input type="number" id="inputTempSetpoint" class="input-dark" value="45.0" min="20" max="150" step="1" style="flex: 1;">
-            <button id="btnSetTempSp" class="btn-primary-sm">SET SP</button>
+        <div class="card-collapsible-body">
+          <!-- Live Heatplate Readout Display Underneath (same layout as load cell) -->
+          <div class="temp-hero">
+            <div class="temp-val-main" id="dispChamberTemp"> --.- °C</div>
+            <div class="temp-val-sub" id="dispChamberPwm">(PWM 0 / 255)</div>
           </div>
-        </div>
-        <div class="quick-preset-row">
-          <button class="preset-btn" data-sp="30">30&deg;C</button>
-          <button class="preset-btn" data-sp="40">40&deg;C</button>
-          <button class="preset-btn" data-sp="50">50&deg;C</button>
-          <button class="preset-btn" data-sp="65">65&deg;C</button>
-          <button class="preset-btn" data-sp="80">80&deg;C</button>
-        </div>
 
-        <!-- Heater Actions -->
-        <div class="dual-btn-row">
-          <button id="btnStartHeater" class="btn-accent" title="Send START to Arduino to enable PI closed-loop heating">⚡ ENABLE PI HEATER</button>
-          <button id="btnStopHeater" class="btn-danger-sm" title="Send STOP to Arduino to shut off heater">■ STOP HEATER</button>
-        </div>
-
-        <!-- Manual PWM Slider -->
-        <div class="form-row" style="margin-top: 10px;">
-          <div style="display: flex; justify-content: space-between; width: 100%; font-size: 0.76rem; color: var(--text-dim);">
-            <span>MANUAL PWM OVERRIDE</span>
-            <span id="dispManualPwmVal">PWM: 0</span>
+          <!-- Target Setpoint Input & Presets -->
+          <div class="form-row">
+            <label for="inputTempSetpoint">TARGET SETPOINT (&deg;C):</label>
+            <div style="display: flex; gap: 6px; flex: 1;">
+              <input type="number" id="inputTempSetpoint" class="input-dark" value="50.0" min="20" max="150" step="1" style="flex: 1;">
+              <button id="btnSetTempSp" class="btn-primary-sm">SET SP</button>
+            </div>
           </div>
-          <input type="range" id="sliderManualPwm" min="0" max="255" value="0" class="range-slider">
+          <div class="quick-preset-row">
+            <button class="preset-btn" data-sp="50">50&deg;C</button>
+            <button class="preset-btn" data-sp="70">70&deg;C</button>
+            <button class="preset-btn" data-sp="100">100&deg;C</button>
+            <button class="preset-btn" data-sp="120">120&deg;C</button>
+          </div>
+
+          <!-- Heater Actions -->
+          <div class="dual-btn-row">
+            <button id="btnStartHeater" class="btn-accent" title="Send START to Arduino to turn on heater">⚡ TURN-ON HEATER</button>
+            <button id="btnStopHeater" class="btn-danger-sm" title="Send STOP to Arduino to shut off heater">■ STOP HEATER</button>
+          </div>
         </div>
       </div>
 
-      <!-- Load Cell Actions -->
+      <!-- Load Cell Actions & Settings -->
       <div class="glass-box">
         <div class="box-title-row">
-          <span class="box-title">LOAD CELL TARE & CALIBRATION</span>
-          <span class="badge-emerald" id="dispLoadcellWeight">0.000 kg</span>
+          <span class="box-title">LOAD CELL TRANSDUCER</span>
+          <span class="val-pill" style="font-size: 0.65rem; color: var(--text-dim);">HX711 24-BIT</span>
         </div>
-        <div class="dual-btn-row">
-          <button id="btnTareLoadcell" class="btn-primary-sm" title="Send TARE command to zero the HX711 load cell">⚖️ TARE LOADCELL</button>
-          <button id="btnCalibratePrompt" class="btn-subtle" title="Calibrate scale with known test weight">📐 CALIBRATE</button>
+
+        <!-- Live Load Cell Readout Display Underneath -->
+        <div class="loadcell-hero">
+          <div class="loadcell-val-main" id="dispLoadcellWeight"> 0.000 kg</div>
+          <div class="loadcell-val-sub" id="dispLoadcellForce">( 0.00 N)</div>
+        </div>
+
+        <!-- Collapsible Settings Toggle Button (Hidden by default to prevent accidental clicks) -->
+        <button id="btnToggleLoadcellSettings" class="btn-toggle-settings" type="button" title="Click to show or hide sensitive Zero/Tare and Calibration settings">
+          <span>⚙️ LOAD CELL SETTINGS & CALIBRATION</span>
+          <span id="iconLoadcellSettingsArrow">▾</span>
+        </button>
+
+        <!-- Hidden Settings Drawer -->
+        <div id="drawerLoadcellSettings" class="settings-drawer">
+          <div class="settings-warning-note">
+            <span>⚠️</span>
+            <span>Tare or calibration directly alters sensor zero/scaling. Action confirmation is required.</span>
+          </div>
+          <div class="dual-btn-row">
+            <button id="btnTareLoadcell" class="btn-danger-sm" title="Zero the HX711 load cell (Requires confirmation)">⚖️ TARE LOADCELL</button>
+            <button id="btnCalibratePrompt" class="btn-subtle" title="Calibrate scale with known test weight (Requires confirmation)">📐 CALIBRATE SCALE</button>
+          </div>
         </div>
       </div>
 
       <!-- Push / Pull Automated Mechanical Test Runner -->
-      <div class="glass-box highlight-purple">
-        <div class="box-title-row">
+      <div class="glass-box highlight-purple collapsible-card">
+        <div class="box-title-row card-collapse-header">
           <span class="box-title">AUTOMATED PUSH / PULL TEST</span>
-          <span class="badge-purple" id="dispTestPhase">IDLE</span>
-        </div>
-
-        <div class="form-row">
-          <label for="selectTestDirection">TEST DIRECTION:</label>
-          <select id="selectTestDirection" class="input-dark">
-            <option value="push" selected>PUSH &rarr; (Compression / Forward +)</option>
-            <option value="pull">PULL &larr; (Tension / Reverse -)</option>
-          </select>
-        </div>
-
-        <div class="test-param-grid">
-          <div class="param-group">
-            <label for="inputTestDistance">TRAVEL (MM):</label>
-            <input type="number" id="inputTestDistance" class="input-dark" value="10.0" min="0.5" max="150" step="0.5">
-          </div>
-          <div class="param-group">
-            <label for="inputTestSpeed">SPEED (MM/S):</label>
-            <input type="number" id="inputTestSpeed" class="input-dark" value="1.0" min="0.1" max="15" step="0.2">
-          </div>
-          <div class="param-group">
-            <label for="inputMaxForceLimit">SAFETY LIMIT (N):</label>
-            <input type="number" id="inputMaxForceLimit" class="input-dark" value="50.0" min="1" max="500" step="5" title="Automatic emergency halt if force exceeds this limit">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="badge-purple" id="dispTestPhase">IDLE</span>
+            <button class="btn-card-toggle" title="Collapse / Expand Setting">▾</button>
           </div>
         </div>
 
-        <div class="checkbox-row">
-          <input type="checkbox" id="checkAutoReturn" checked>
-          <label for="checkAutoReturn">Auto-return carriage to origin after test completes</label>
-        </div>
-
-        <div class="checkbox-row">
-          <input type="checkbox" id="checkAutoTare" checked>
-          <label for="checkAutoTare">Auto-tare load cell right before motion begins</label>
-        </div>
-
-        <!-- Start / Abort Test Button -->
-        <button id="btnExecuteTest" class="btn-purple-lg">
-          <span>🚀</span>
-          <span id="labelExecuteTest">START PUSH / PULL TEST SEQUENCE</span>
-        </button>
-
-        <!-- Test Results Card -->
-        <div class="test-results-card" id="cardTestResults">
-          <div class="results-header">TEST CHARACTERIZATION SUMMARY</div>
-          <div class="results-grid">
-            <div class="res-item">
-              <span class="res-lbl">PEAK FORCE</span>
-              <span class="res-val" id="resPeakForce">-- N</span>
+        <div class="card-collapsible-body">
+          <!-- Dual Push / Pull Action Buttons with Individual Config Gears -->
+          <div id="rowTestButtons" class="test-action-grid">
+            <div class="test-btn-group">
+              <div class="test-btn-row">
+                <button id="btnStartPushTest" class="btn-test-action btn-push" title="Start automated push / compression test sequence (moves toward object &minus;)">
+                  <span>◀</span>
+                  <span>PUSH TEST</span>
+                </button>
+                <button id="btnConfigPushTest" class="btn-test-gear" title="Configure Push Test parameters"><span class="gear-icon">⚙️</span></button>
+              </div>
+              <div class="test-param-summary" id="summaryPushParams">10.0 mm @ 1.0 mm/s</div>
             </div>
-            <div class="res-item">
-              <span class="res-lbl">DISP @ PEAK</span>
-              <span class="res-val" id="resPeakDisp">-- mm</span>
-            </div>
-            <div class="res-item">
-              <span class="res-lbl">STIFFNESS</span>
-              <span class="res-val" id="resStiffness">-- N/mm</span>
-            </div>
-            <div class="res-item">
-              <span class="res-lbl">ENERGY</span>
-              <span class="res-val" id="resEnergy">-- mJ</span>
+
+            <div class="test-btn-group">
+              <div class="test-btn-row">
+                <button id="btnStartPullTest" class="btn-test-action btn-pull" title="Start automated pull / tension test sequence (moves away from object +)">
+                  <span>▶</span>
+                  <span>PULL TEST</span>
+                </button>
+                <button id="btnConfigPullTest" class="btn-test-gear" title="Configure Pull Test parameters"><span class="gear-icon">⚙️</span></button>
+              </div>
+              <div class="test-param-summary" id="summaryPullParams">10.0 mm @ 1.0 mm/s</div>
             </div>
           </div>
-          <button id="btnExportCsv" class="btn-csv" disabled>💾 EXPORT TEST CSV DATA</button>
+
+          <!-- Active Abort Button during Running Test -->
+          <button id="btnAbortTest" class="btn-abort-test" style="display: none;" title="Abort the currently running mechanical test sequence">
+            <span>🛑</span>
+            <span>ABORT TEST RUN</span>
+          </button>
+
+          <!-- Test Results Card -->
+          <div class="test-results-card" id="cardTestResults">
+            <div class="results-header">TEST CHARACTERIZATION SUMMARY</div>
+            <div class="results-grid">
+              <div class="res-item">
+                <span class="res-lbl">PEAK FORCE</span>
+                <span class="res-val" id="resPeakForce">-- N</span>
+              </div>
+              <div class="res-item">
+                <span class="res-lbl">DISP @ PEAK</span>
+                <span class="res-val" id="resPeakDisp">-- mm</span>
+              </div>
+              <div class="res-item">
+                <span class="res-lbl">STIFFNESS</span>
+                <span class="res-val" id="resStiffness">-- N/mm</span>
+              </div>
+              <div class="res-item">
+                <span class="res-lbl">ENERGY</span>
+                <span class="res-val" id="resEnergy">-- mJ</span>
+              </div>
+            </div>
+            <button id="btnExportCsv" class="btn-csv" disabled>💾 EXPORT TEST CSV DATA</button>
+          </div>
         </div>
       </div>
 
       <!-- Real-Time Terminal & Diagnostics -->
-      <div class="glass-box terminal-box">
-        <div class="box-title-row">
-          <span class="box-title">SYSTEM DIAGNOSTICS & TELEMETRY LOG</span>
-          <div class="filter-tabs">
-            <button class="tab-btn active" data-filter="all">ALL</button>
-            <button class="tab-btn" data-filter="motor">MOTOR</button>
-            <button class="tab-btn" data-filter="bench">BENCH</button>
-            <button id="btnClearTerm" class="tab-btn">CLEAR</button>
-          </div>
+      <div class="glass-box terminal-box collapsible-card">
+        <div class="box-title-row card-collapse-header">
+          <span class="box-title">SYSTEM DIAGNOSTICS & LOG</span>
+          <button class="btn-card-toggle" title="Collapse / Expand Terminal">▾</button>
         </div>
-        <div class="terminal-log" id="termOutput"></div>
+        <div class="card-collapsible-body">
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 6px;">
+            <div class="filter-tabs">
+              <button class="tab-btn active" data-filter="all">ALL</button>
+              <button class="tab-btn" data-filter="motor">MOTOR</button>
+              <button class="tab-btn" data-filter="bench">BENCH</button>
+              <button id="btnClearTerm" class="tab-btn">CLEAR</button>
+            </div>
+          </div>
+          <div class="terminal-log" id="termOutput"></div>
+        </div>
       </div>
 
     </section>
 
-  </main>
+  <!-- Modal Pop-up: Jog Speed Configuration (Vmax) -->
+  <div class="modal-overlay" id="modalJogSpeed" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.15rem;">⚙️</span>
+          <span class="modal-title">JOG SPEED CONFIGURATION (VMAX)</span>
+        </div>
+        <button class="btn-modal-close" id="btnCloseSpeedModal" title="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-notice">
+          Actuator max mechanical limit: <strong>3.0 mm/s</strong> on 1.0 mm pitch lead screw. Continuous jog and step moves operate at this velocity.
+        </div>
+
+        <div class="form-row" style="margin-top: 14px;">
+          <label for="selectJogSpeed" style="font-size: 0.74rem; font-weight: 700; color: var(--text-dim);">SPEED PRESET:</label>
+          <select id="selectJogSpeed" class="input-dark" style="flex: 1; padding: 8px 12px; font-weight: 600; font-size: 0.84rem; cursor: pointer;">
+            <option value="0.1">0.1 mm/s - Micro Feed</option>
+            <option value="0.2">0.2 mm/s - Precision Creep</option>
+            <option value="0.5">0.5 mm/s - Slow</option>
+            <option value="1.0" selected>1.0 mm/s - Standard [Default]</option>
+            <option value="1.5">1.5 mm/s - Moderate</option>
+            <option value="2.0">2.0 mm/s - Medium Fast</option>
+            <option value="2.5">2.5 mm/s - Fast Motion</option>
+            <option value="3.0">3.0 mm/s - Maximum [Motor Limit]</option>
+            <option value="custom">Custom Speed...</option>
+          </select>
+        </div>
+
+        <div class="custom-speed-row" id="rowCustomSpeed" style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
+          <label for="inputCustomSpeed" style="font-size: 0.74rem; font-weight: 700; color: var(--text-dim); min-width: 90px;">CUSTOM VMAX:</label>
+          <input type="number" id="inputCustomSpeed" class="input-dark" value="1.0" min="0.05" max="3.0" step="0.1" style="width: 80px; padding: 7px 10px; font-weight: 700; font-size: 0.88rem;">
+          <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary);">mm/s</span>
+          <button id="btnApplyCustomSpeed" class="btn-subtle" style="margin-left: auto; padding: 7px 14px;">APPLY VMAX</button>
+        </div>
+
+        <div class="modal-footer" style="margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px;">
+          <button id="btnDoneSpeedModal" class="btn-primary-sm" style="padding: 8px 20px; font-size: 0.82rem; font-weight: 700;">DONE</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Pop-up: Automated Test Configuration (Push or Pull) -->
+  <div class="modal-overlay" id="modalTestConfig" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.15rem;">⚙️</span>
+          <span class="modal-title" id="titleTestConfigModal">PUSH TEST CONFIGURATION</span>
+        </div>
+        <button class="btn-modal-close" id="btnCloseTestConfigModal" title="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-notice" id="noticeTestConfigDirection">
+          Configuring parameters for <strong>PUSH</strong> (Compression / Move toward object &minus;) mechanical test sequence.
+        </div>
+
+        <div class="test-param-grid" style="margin-top: 14px; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+          <div class="param-group">
+            <label for="inputModalTestDistance" style="font-size: 0.68rem; font-weight: 700; color: var(--text-dim);">TRAVEL (MM):</label>
+            <input type="number" id="inputModalTestDistance" class="input-dark" value="10.0" min="0.5" max="150" step="0.5" style="padding: 7px 10px; font-weight: 700; font-size: 0.88rem;">
+          </div>
+          <div class="param-group">
+            <label for="inputModalTestSpeed" style="font-size: 0.68rem; font-weight: 700; color: var(--text-dim);">SPEED (MM/S):</label>
+            <input type="number" id="inputModalTestSpeed" class="input-dark" value="1.0" min="0.1" max="3.0" step="0.1" style="padding: 7px 10px; font-weight: 700; font-size: 0.88rem;" title="Max 3.0 mm/s motor limit">
+          </div>
+          <div class="param-group">
+            <label for="inputModalMaxForceLimit" style="font-size: 0.68rem; font-weight: 700; color: var(--text-dim);">LIMIT (N):</label>
+            <input type="number" id="inputModalMaxForceLimit" class="input-dark" value="50.0" min="1" max="500" step="5" style="padding: 7px 10px; font-weight: 700; font-size: 0.88rem;">
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 14px;">
+          <label class="checkbox-row" for="checkModalAutoReturn">
+            <input type="checkbox" id="checkModalAutoReturn">
+            <span>Auto-return carriage to origin after test completes</span>
+          </label>
+          <label class="checkbox-row" for="checkModalAutoTare">
+            <input type="checkbox" id="checkModalAutoTare" checked>
+            <span>Auto-tare load cell right before motion begins</span>
+          </label>
+        </div>
+
+        <div class="modal-footer" style="margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px;">
+          <button id="btnSaveTestConfigModal" class="btn-primary-sm" style="padding: 8px 20px; font-size: 0.82rem; font-weight: 700;">SAVE CONFIG</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Pop-up: System Configuration & Dual Hardware Connections -->
+  <div class="modal-overlay" id="modalSystemConfig" aria-hidden="true">
+    <div class="modal-dialog" style="max-width: 500px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.15rem;">⚙️</span>
+          <span class="modal-title">SYSTEM CONFIGURATION &amp; HARDWARE PORTS</span>
+        </div>
+        <button class="btn-modal-close" id="btnCloseSystemConfigModal" title="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-notice">
+          Dual Web Serial hardware communication: U2D2 Dynamixel lead-screw actuator &amp; Arduino Heated Loadcell Suite.
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 14px;">
+          <!-- Port 1: U2D2 Dynamixel Motor -->
+          <div class="port-card" id="cardMotorPort" style="padding: 10px 14px;">
+            <div class="port-header">
+              <span class="port-indicator" id="indMotor"></span>
+              <span class="port-name" style="font-size: 0.74rem;">PORT 1: U2D2 DYNAMIXEL AXIS</span>
+              <span class="port-usb-pill" id="pillMotorUsb" title="Target USB Device">VID:0403 PID:6014</span>
+            </div>
+            <div class="port-controls" style="margin-top: 8px;">
+              <span class="port-baud-pill" title="Fixed Protocol Baud Rate">57,600 baud</span>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 0.68rem; color: var(--text-dim); font-weight: 700;">ID:</span>
+                <input type="number" id="motorIdInput" class="port-input" value="1" min="1" max="253" title="Actuator ID" style="width: 45px; padding: 4px 6px;">
+              </div>
+              <button id="btnConnectMotor" class="btn-primary-sm" style="margin-left: auto; padding: 6px 14px;">CONNECT U2D2</button>
+              <button id="btnPairMotor" class="btn-icon-subtle" title="Pair or choose a different USB port for U2D2">⇄</button>
+            </div>
+          </div>
+
+          <!-- Port 2: Arduino Heated Force Bench -->
+          <div class="port-card" id="cardArduinoPort" style="padding: 10px 14px;">
+            <div class="port-header">
+              <span class="port-indicator" id="indArduino"></span>
+              <span class="port-name" style="font-size: 0.74rem;">PORT 2: ARDUINO FORCE-BENCH</span>
+              <span class="port-usb-pill" id="pillArduinoUsb" title="Target USB Device">VID:1A86 PID:7523</span>
+            </div>
+            <div class="port-controls" style="margin-top: 8px;">
+              <span class="port-baud-pill" title="Fixed Firmware Baud Rate">115,200 baud</span>
+              <button id="btnConnectArduino" class="btn-primary-sm" style="margin-left: auto; padding: 6px 14px;">CONNECT ARDUINO</button>
+              <button id="btnPairArduino" class="btn-icon-subtle" title="Pair or choose a different USB port for Arduino">⇄</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="margin-top: 18px; display: flex; justify-content: flex-end;">
+          <button id="btnDoneSystemConfigModal" class="btn-primary-sm" style="padding: 8px 22px; font-weight: 700;">DONE</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Communication Libraries & Logic -->
   <script src="protocol.js"></script>

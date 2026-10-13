@@ -191,30 +191,39 @@ function buildPacketP1(id, instruction, params = []) {
 }
 
 /**
- * Byte conversions
+ * Helper to convert integer to little-endian bytes using DataView
+ * Correctly encodes 8-bit, 16-bit, and 32-bit signed and unsigned values
  */
-function intToBytes(value, byteCount, signed = false) {
-  const bytes = [];
-  let val = Math.round(value);
-  if (signed && val < 0) {
-    val = (1 << (8 * byteCount)) + val;
+function intToBytes(value, size) {
+  const buf = new ArrayBuffer(4);
+  const view = new DataView(buf);
+  const num = Math.round(Number(value) || 0);
+  if (size === 1) {
+    view.setInt8(0, num);
+  } else if (size === 2) {
+    view.setInt16(0, num, true);
+  } else if (size === 4) {
+    view.setInt32(0, num, true);
   }
-  for (let i = 0; i < byteCount; i++) {
-    bytes.push((val >> (8 * i)) & 0xff);
-  }
-  return bytes;
+  return Array.from(new Uint8Array(buf).subarray(0, size));
 }
 
-function bytesToInt(byteArray, signed = false) {
-  let val = 0;
-  const len = byteArray.length;
-  for (let i = 0; i < len; i++) {
-    val |= (byteArray[i] << (8 * i));
+/**
+ * Helper to convert little-endian bytes to integer using DataView
+ * Correctly decodes 8-bit, 16-bit, and 32-bit signed/unsigned values without JS shift truncation
+ */
+function bytesToInt(bytes, signed = false) {
+  if (!bytes || bytes.length === 0) return 0;
+  const buf = new ArrayBuffer(4);
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < Math.min(4, bytes.length); i++) {
+    u8[i] = bytes[i];
   }
-  if (signed && (byteArray[len - 1] & 0x80)) {
-    val -= (1 << (8 * len));
-  }
-  return val;
+  const view = new DataView(buf);
+  if (bytes.length === 1) return signed ? view.getInt8(0) : view.getUint8(0);
+  if (bytes.length === 2) return signed ? view.getInt16(0, true) : view.getUint16(0, true);
+  if (bytes.length >= 4) return signed ? view.getInt32(0, true) : view.getUint32(0, true);
+  return 0;
 }
 
 // Export object for browser globals
