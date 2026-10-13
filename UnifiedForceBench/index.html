@@ -226,6 +226,7 @@
             <span class="plot-name">SUBPLOT 3: PUSH / PULL MECHANICAL TEST (FORCE VS DISPLACEMENT)</span>
           </div>
           <div class="plot-meta-group">
+            <button id="btnClearPushPullPlot" class="btn-clear-plot" title="Clear Push/Pull mechanical plot data">CLEAR PLOT</button>
             <span class="badge-purple" id="badgeTestState">TEST: READY</span>
             <span class="plot-stat" id="statTestPeak">PEAK: -- N @ -- mm</span>
             <span class="plot-stat" id="statTestStiffness">STIFFNESS: -- N/mm</span>
@@ -361,7 +362,7 @@
             <div class="results-header">TEST CHARACTERIZATION SUMMARY</div>
             <div class="results-grid">
               <div class="res-item">
-                <span class="res-lbl">PEAK FORCE</span>
+                <span class="res-lbl" id="lblResPeakForce">PEAK FORCE</span>
                 <span class="res-val" id="resPeakForce">-- N</span>
               </div>
               <div class="res-item">

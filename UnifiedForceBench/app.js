@@ -195,6 +195,7 @@ class UnifiedForceBenchApp {
       statLiveForce: document.getElementById('statLiveForce'),
       statPeakForce: document.getElementById('statPeakForce'),
       btnToggleUnits: document.getElementById('btnToggleUnits'),
+      btnClearPushPullPlot: document.getElementById('btnClearPushPullPlot'),
       badgeTestState: document.getElementById('badgeTestState'),
       statTestPeak: document.getElementById('statTestPeak'),
       statTestStiffness: document.getElementById('statTestStiffness'),
@@ -226,6 +227,7 @@ class UnifiedForceBenchApp {
       summaryPullParams: document.getElementById('summaryPullParams'),
       btnAbortTest: document.getElementById('btnAbortTest'),
       cardTestResults: document.getElementById('cardTestResults'),
+      lblResPeakForce: document.getElementById('lblResPeakForce'),
       resPeakForce: document.getElementById('resPeakForce'),
       resPeakDisp: document.getElementById('resPeakDisp'),
       resStiffness: document.getElementById('resStiffness'),
@@ -519,6 +521,9 @@ class UnifiedForceBenchApp {
     }
     if (this.el.btnAbortTest) {
       this.el.btnAbortTest.addEventListener('click', () => this.abortTestSequence());
+    }
+    if (this.el.btnClearPushPullPlot) {
+      this.el.btnClearPushPullPlot.addEventListener('click', () => this.clearTestPlot(true));
     }
 
     if (this.el.btnConfigPushTest) {
@@ -2029,6 +2034,34 @@ class UnifiedForceBenchApp {
     }
   }
 
+  clearTestPlot(manual = false) {
+    this.testDataPoints = [];
+    this.testPeakForceN = 0.0;
+    this.testDispAtPeakMm = 0.0;
+    this.testStiffnessNPerMm = 0.0;
+    this.testEnergyMJ = 0.0;
+    this.clearTestResultsDisplay();
+    if (manual) {
+      this.el.badgeTestState.textContent = "TEST: READY";
+      this.el.badgeTestState.className = "badge-purple";
+      this.el.dispTestPhase.textContent = "IDLE";
+      this.log("TEST", "Push/Pull mechanical plot cleared manually.", "test");
+    }
+  }
+
+  clearTestResultsDisplay() {
+    if (this.el.lblResPeakForce) {
+      this.el.lblResPeakForce.textContent = "PEAK FORCE";
+    }
+    if (this.el.resPeakForce) this.el.resPeakForce.textContent = "-- N (-- kg)";
+    if (this.el.resPeakDisp) this.el.resPeakDisp.textContent = "-- mm";
+    if (this.el.resStiffness) this.el.resStiffness.textContent = "-- N/mm";
+    if (this.el.resEnergy) this.el.resEnergy.textContent = "-- mJ";
+    if (this.el.statTestPeak) this.el.statTestPeak.textContent = "PEAK: -- N @ -- mm";
+    if (this.el.statTestStiffness) this.el.statTestStiffness.textContent = "STIFFNESS: -- N/mm";
+    if (this.el.btnExportCsv) this.el.btnExportCsv.disabled = true;
+  }
+
   async startTestSequence(direction = 'push') {
     if (!this.isMotorConnected) {
       alert("Please connect U2D2 motor port first.");
@@ -2040,6 +2073,7 @@ class UnifiedForceBenchApp {
     }
 
     this.testDirection = direction; // "push" or "pull"
+    const isPull = (this.testDirection === "pull");
     const cfg = this.testConfigs[direction] || this.testConfigs.push;
     this.testTravelMm = Math.max(0.1, cfg.travelMm || 10.0);
     this.testSpeedMmS = Math.min(3.0, Math.max(0.05, cfg.speedMmS || 1.0));
@@ -2047,31 +2081,35 @@ class UnifiedForceBenchApp {
     const autoTare = cfg.autoTare;
     this.testAutoReturn = cfg.autoReturn;
 
-    this.isTestRunning = true;
-    this.testDataPoints = [];
-    this.testPeakForceN = 0.0;
-    this.testDispAtPeakMm = 0.0;
-    this.el.dispTestPhase.textContent = `RUNNING (${this.testDirection.toUpperCase()})`;
-    this.el.badgeTestState.textContent = `TEST: RUNNING (${this.testDirection.toUpperCase()})`;
+    // 1. Immediately clear previous plot data, peak tracking, and results cards
+    this.clearTestPlot();
+
+    if (this.el.lblResPeakForce) {
+      this.el.lblResPeakForce.textContent = isPull ? "PEAK FORCE (MIN PULL)" : "PEAK FORCE (MAX PUSH)";
+    }
+
+    this.isTestRunning = false; // Do not sample until motion actually starts
+    this.el.dispTestPhase.textContent = `PREPARING (${this.testDirection.toUpperCase()})`;
+    this.el.badgeTestState.textContent = `TEST: PREPARING (${this.testDirection.toUpperCase()})`;
     this.el.badgeTestState.className = "badge-emerald";
     if (this.el.rowTestButtons) this.el.rowTestButtons.style.display = "none";
     if (this.el.btnAbortTest) this.el.btnAbortTest.style.display = "flex";
     this.el.btnExportCsv.disabled = true;
 
-    this.log("TEST", `Starting automated ${this.testDirection.toUpperCase()} test (${this.testTravelMm} mm @ ${this.testSpeedMmS} mm/s, Limit: ${this.testMaxForceLimitN} N)...`, "test");
+    this.log("TEST", `Starting automated ${this.testDirection.toUpperCase()} test (${this.testTravelMm} mm @ ${this.testSpeedMmS} mm/s, Limit: ${this.testMaxForceLimitN} N)... Previous plot cleared.`, "test");
 
-    // 1. Optional Auto-Tare
+    // 2. Optional Auto-Tare (non-blocking direct command)
     if (autoTare) {
       this.log("TEST", "Auto-taring loadcell before motion begins...", "test");
-      await this.tareLoadcell();
+      await this.sendArduinoCommand("TARE");
       await new Promise(r => setTimeout(r, 600));
     }
 
-    // 2. Record initial linear position - read fresh live position directly from hardware
+    // 3. Record initial linear position - read fresh live position directly from hardware
     const liveStartTicks = await this.readPresentPosition();
     this.testStartMm = this.ticksToLinearMm(liveStartTicks);
 
-    // 3. Ensure Mode 4 and set test velocity with smooth acceleration profile
+    // 4. Ensure Mode 4 and set test velocity with smooth acceleration profile
     await this.ensureExtendedPositionMode();
     const velUnits = this.speedMmSToVelocityUnits(this.testSpeedMmS);
     const velBytes = DXL.intToBytes(velUnits, 4);
@@ -2084,10 +2122,10 @@ class UnifiedForceBenchApp {
     const accelPkt = DXL.buildPacketP2(this.motorActiveId, DXL.INST.WRITE, [108, 0, ...accelBytes]);
     await this.sendMotorPacket(accelPkt, `SET TEST ACCEL = ${accelUnits}`);
 
-    // 4. Command target displacement
+    // 5. Command target displacement
     // Direction convention: Positive (+) is move away from object for PULL test;
     // Negative (-) is move toward object for PUSH test.
-    const sign = (this.testDirection === "pull") ? 1 : -1;
+    const sign = isPull ? 1 : -1;
     const targetMm = this.testStartMm + (sign * this.testTravelMm);
     const targetTicks = this.linearMmToTicks(targetMm);
 
@@ -2095,7 +2133,12 @@ class UnifiedForceBenchApp {
     const posPkt = DXL.buildPacketP2(this.motorActiveId, DXL.INST.WRITE, [116, 0, ...posBytes]);
     await this.sendMotorPacket(posPkt, `TEST MOVE TO ${targetMm.toFixed(2)} mm`);
 
-    // 5. Monitor motion completion & sample real-time test data
+    // 6. Motion officially starts: activate live sampling loop
+    this.isTestRunning = true;
+    this.el.dispTestPhase.textContent = `RUNNING (${this.testDirection.toUpperCase()})`;
+    this.el.badgeTestState.textContent = `TEST: RUNNING (${this.testDirection.toUpperCase()})`;
+
+    // Monitor motion arrival & sample real-time test data
     const checkInterval = setInterval(async () => {
       if (!this.isTestRunning) {
         clearInterval(checkInterval);
@@ -2140,15 +2183,24 @@ class UnifiedForceBenchApp {
       tempC: this.liveTempC || 0
     });
 
-    // Update test peak in real time
-    if (forceAbsN > Math.abs(this.testPeakForceN)) {
-      this.testPeakForceN = this.liveForceN;
-      this.testDispAtPeakMm = dispFromStart;
+    // Track min force when pull (most negative algebraic force), track max force when push (highest positive algebraic force)
+    if (this.testDirection === "pull") {
+      if (this.testDataPoints.length === 1 || this.liveForceN < this.testPeakForceN) {
+        this.testPeakForceN = this.liveForceN;
+        this.testDispAtPeakMm = dispFromStart;
+      }
+    } else {
+      if (this.testDataPoints.length === 1 || this.liveForceN > this.testPeakForceN) {
+        this.testPeakForceN = this.liveForceN;
+        this.testDispAtPeakMm = dispFromStart;
+      }
     }
 
     // Update real-time stats in header badges on every sample
     if (this.el.statTestPeak) {
-      this.el.statTestPeak.textContent = `PEAK: ${Math.abs(this.testPeakForceN).toFixed(2)} N @ ${this.testDispAtPeakMm.toFixed(2)} mm`;
+      const signP = this.testPeakForceN > 0.001 ? "+" : "";
+      const pkLabel = (this.testDirection === "pull") ? "MIN (PULL)" : "MAX (PUSH)";
+      this.el.statTestPeak.textContent = `${pkLabel}: ${signP}${this.testPeakForceN.toFixed(2)} N @ ${this.testDispAtPeakMm.toFixed(2)} mm`;
     }
 
     // Update real-time stiffness slope
@@ -2157,17 +2209,18 @@ class UnifiedForceBenchApp {
       const pLatest = this.testDataPoints[this.testDataPoints.length - 1];
       const dx = pLatest.dispMm - pFirst.dispMm;
       if (dx > 0.05) {
-        const k = (Math.abs(pLatest.forceN) - Math.abs(pFirst.forceN)) / dx;
+        const k = Math.abs(pLatest.forceN - pFirst.forceN) / dx;
         if (k > 0 && this.el.statTestStiffness) {
           this.el.statTestStiffness.textContent = `STIFFNESS: ${k.toFixed(2)} N/mm`;
         }
       }
     }
 
-    // Safety force limit check
+    // Safety force limit check (triggers if absolute force magnitude exceeds limit)
     if (forceAbsN >= this.testMaxForceLimitN && this.isTestRunning) {
       this.isTestRunning = false;
-      this.log("TEST", `⚠️ SAFETY FORCE LIMIT REACHED (${forceAbsN.toFixed(2)} N >= ${this.testMaxForceLimitN} N)! Stopping motor immediately...`, "err");
+      const limitSign = (this.testDirection === "pull") ? "-" : "+";
+      this.log("TEST", `⚠️ SAFETY FORCE LIMIT REACHED (${this.liveForceN.toFixed(2)} N reached ${limitSign}${this.testMaxForceLimitN} N limit)! Stopping motor immediately...`, "err");
       this.stopAutomatedTestMotion().then(() => {
         this.finishTestSequence(true);
       });
@@ -2224,34 +2277,48 @@ class UnifiedForceBenchApp {
   computeTestCharacterization() {
     if (this.testDataPoints.length < 2) return;
 
-    // Peak Force
-    let maxF = 0;
-    let dispAtMax = 0;
-    this.testDataPoints.forEach(p => {
-      const f = Math.abs(p.forceN);
-      if (f > maxF) {
-        maxF = f;
-        dispAtMax = p.dispMm;
-      }
-    });
+    let peakF = 0;
+    let dispAtPeak = 0;
 
-    this.testPeakForceN = maxF;
-    this.testDispAtPeakMm = dispAtMax;
+    // Track min force when pull (tension), track max force when push (compression)
+    if (this.testDirection === "pull") {
+      let minF = Infinity;
+      this.testDataPoints.forEach(p => {
+        if (p.forceN < minF) {
+          minF = p.forceN;
+          dispAtPeak = p.dispMm;
+        }
+      });
+      peakF = (minF === Infinity) ? 0 : minF;
+    } else {
+      let maxF = -Infinity;
+      this.testDataPoints.forEach(p => {
+        if (p.forceN > maxF) {
+          maxF = p.forceN;
+          dispAtPeak = p.dispMm;
+        }
+      });
+      peakF = (maxF === -Infinity) ? 0 : maxF;
+    }
 
-    // Stiffness (Linear slope ΔF / ΔX from 20% to 80% of peak)
-    const fLow = maxF * 0.2;
-    const fHigh = maxF * 0.8;
+    this.testPeakForceN = peakF;
+    this.testDispAtPeakMm = dispAtPeak;
+
+    // Stiffness (Linear slope |ΔF| / ΔX from 20% to 80% of peak magnitude)
+    const peakAbs = Math.abs(peakF);
+    const fLow = peakAbs * 0.2;
+    const fHigh = peakAbs * 0.8;
     const pLow = this.testDataPoints.find(p => Math.abs(p.forceN) >= fLow);
     const pHigh = this.testDataPoints.find(p => Math.abs(p.forceN) >= fHigh);
 
     let stiffness = 0;
     if (pLow && pHigh && Math.abs(pHigh.dispMm - pLow.dispMm) > 0.05) {
-      stiffness = (Math.abs(pHigh.forceN) - Math.abs(pLow.forceN)) / (pHigh.dispMm - pLow.dispMm);
+      stiffness = Math.abs(pHigh.forceN - pLow.forceN) / Math.abs(pHigh.dispMm - pLow.dispMm);
     }
 
     this.testStiffnessNPerMm = stiffness;
 
-    // Energy = trapezoidal integration ∫ F dx (mJ = N * mm)
+    // Energy = trapezoidal integration ∫ |F| dx (mJ = N * mm)
     let energy = 0;
     for (let i = 1; i < this.testDataPoints.length; i++) {
       const dx = Math.abs(this.testDataPoints[i].dispMm - this.testDataPoints[i - 1].dispMm);
@@ -2260,13 +2327,15 @@ class UnifiedForceBenchApp {
     }
     this.testEnergyMJ = energy;
 
-    // Update UI
-    this.el.resPeakForce.textContent = `${this.testPeakForceN.toFixed(2)} N (${(this.testPeakForceN / 9.80665).toFixed(3)} kg)`;
+    // Update UI with signed values and clear direction indicators
+    const signPeak = this.testPeakForceN > 0.001 ? "+" : "";
+    const pkTitle = (this.testDirection === "pull") ? "MIN (PULL)" : "MAX (PUSH)";
+    this.el.resPeakForce.textContent = `${signPeak}${this.testPeakForceN.toFixed(2)} N (${signPeak}${(this.testPeakForceN / 9.80665).toFixed(3)} kg)`;
     this.el.resPeakDisp.textContent = `${this.testDispAtPeakMm.toFixed(2)} mm`;
     this.el.resStiffness.textContent = stiffness > 0 ? `${stiffness.toFixed(2)} N/mm` : "-- N/mm";
     this.el.resEnergy.textContent = `${energy.toFixed(1)} mJ`;
 
-    this.el.statTestPeak.textContent = `PEAK: ${this.testPeakForceN.toFixed(2)} N @ ${this.testDispAtPeakMm.toFixed(2)} mm`;
+    this.el.statTestPeak.textContent = `${pkTitle}: ${signPeak}${this.testPeakForceN.toFixed(2)} N @ ${this.testDispAtPeakMm.toFixed(2)} mm`;
     this.el.statTestStiffness.textContent = `STIFFNESS: ${stiffness.toFixed(1)} N/mm`;
   }
 
@@ -2426,7 +2495,7 @@ class UnifiedForceBenchApp {
     ctx.stroke();
   }
 
-  // Subplot 2: Force / Weight vs Time
+  // Subplot 2: Force / Weight vs Time (Symmetric Signed Range)
   renderSubplot2Force() {
     const c = this.el.canvasForcePlot;
     if (!c) return;
@@ -2453,14 +2522,14 @@ class UnifiedForceBenchApp {
     const ph = h - pad.top - pad.bottom;
     if (pw <= 0 || ph <= 0) return;
 
-    // Y Range (Symmetric or auto)
-    let maxF = 5.0; // 5 N default
+    // Y Range (Symmetric around zero for signed negative & positive forces)
+    let maxAbs = this.isForceUnitNewton ? 5.0 : 0.5; // 5 N or 0.5 kg default
     this.forceHistory.forEach(d => {
-      const val = this.isForceUnitNewton ? Math.abs(d.forceN) : Math.abs(d.weightKg);
-      if (val > maxF) maxF = val * 1.15;
+      const val = Math.abs(this.isForceUnitNewton ? d.forceN : d.weightKg);
+      if (val > maxAbs) maxAbs = val * 1.15;
     });
-    const minY = 0.0;
-    const maxY = maxF;
+    const minY = -maxAbs;
+    const maxY = maxAbs;
     const yRange = maxY - minY || 1;
 
     // Grid lines
@@ -2480,20 +2549,33 @@ class UnifiedForceBenchApp {
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
       const unitLbl = this.isForceUnitNewton ? "N" : "kg";
-      ctx.fillText(`${yVal.toFixed(2)} ${unitLbl}`, pad.left - 6 * dpr, y);
+      const signStr = yVal > 0.005 ? "+" : "";
+      ctx.fillText(`${signStr}${yVal.toFixed(2)} ${unitLbl}`, pad.left - 6 * dpr, y);
     }
+
+    // Zero Reference Baseline (Cyan dashed line at 0.0)
+    const zeroY = pad.top + ph - ((0.0 - minY) / yRange) * ph;
+    ctx.save();
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+    ctx.lineWidth = 1 * dpr;
+    ctx.setLineDash([4 * dpr, 4 * dpr]);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, zeroY);
+    ctx.lineTo(w - pad.right, zeroY);
+    ctx.stroke();
+    ctx.restore();
 
     if (this.forceHistory.length < 2) return;
 
     const nowSec = (performance.now() - this.startTime) / 1000.0;
     const minT = nowSec - this.historyDurationSec;
 
-    // Live Force Curve (Emerald Green)
+    // Live Force Curve (Emerald Green) - signed value
     ctx.beginPath();
     ctx.strokeStyle = "#10b981";
     ctx.lineWidth = 2.2 * dpr;
     this.forceHistory.forEach((d, i) => {
-      const val = this.isForceUnitNewton ? Math.abs(d.forceN) : Math.abs(d.weightKg);
+      const val = this.isForceUnitNewton ? d.forceN : d.weightKg;
       const x = pad.left + ((d.t - minT) / this.historyDurationSec) * pw;
       const y = pad.top + ph - ((val - minY) / yRange) * ph;
       if (i === 0) ctx.moveTo(x, y);
@@ -2502,7 +2584,7 @@ class UnifiedForceBenchApp {
     ctx.stroke();
   }
 
-  // Subplot 3: Push / Pull Test (Force vs Displacement) - Real-time auto-scaling
+  // Subplot 3: Push / Pull Test (Force vs Displacement) - Real-time auto-scaling with signed forces
   renderSubplot3PushPull() {
     const c = this.el.canvasPushPullPlot;
     if (!c) return;
@@ -2529,17 +2611,38 @@ class UnifiedForceBenchApp {
     const ph = h - pad.top - pad.bottom;
     if (pw <= 0 || ph <= 0) return;
 
-    // Determine current observed peak values for real-time dynamic auto-scaling
-    let maxObservedF = 0.5;
+    // Determine current observed min/max force and displacement for dynamic scaling
+    let minObservedF = 0.0;
+    let maxObservedF = 0.0;
     let maxObservedDisp = Math.max(1.0, this.testTravelMm || 5.0);
+
     this.testDataPoints.forEach(p => {
-      if (p.forceAbsN > maxObservedF) maxObservedF = p.forceAbsN;
+      const fn = p.forceN !== undefined ? p.forceN : 0;
+      if (fn < minObservedF) minObservedF = fn;
+      if (fn > maxObservedF) maxObservedF = fn;
       if (p.dispMm > maxObservedDisp) maxObservedDisp = p.dispMm * 1.05;
     });
 
-    // Auto-scale Y Range: 25% headroom above highest observed force (minimum 1.0 N for clear grid visibility)
-    const maxY = Math.max(1.0, maxObservedF * 1.25);
-    // X Range: planned test travel or observed displacement + 5%
+    // Auto-scale Y Range:
+    // If predominantly negative (pull): provide headroom downwards + small positive margin for 0 line visibility
+    // If predominantly positive (push): provide headroom upwards + small negative margin for 0 line visibility
+    // If both: symmetric bounds around zero
+    let minY, maxY;
+    if (minObservedF < -0.1 && maxObservedF > 0.1) {
+      const bound = Math.max(Math.abs(minObservedF), maxObservedF, 1.0) * 1.25;
+      minY = -bound;
+      maxY = bound;
+    } else if (minObservedF < -0.1 || this.testDirection === "pull") {
+      const absLow = Math.max(Math.abs(minObservedF), 1.0) * 1.25;
+      minY = -absLow;
+      maxY = Math.max(0.5, maxObservedF * 1.25, absLow * 0.15);
+    } else {
+      const absHigh = Math.max(maxObservedF, 1.0) * 1.25;
+      maxY = absHigh;
+      minY = Math.min(-0.5, minObservedF * 1.25, -absHigh * 0.15);
+    }
+
+    const yRange = maxY - minY || 1;
     const maxX = maxObservedDisp;
 
     // Grid & Axis
@@ -2553,13 +2656,28 @@ class UnifiedForceBenchApp {
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     for (let i = 0; i <= ySteps; i++) {
-      const fVal = (i / ySteps) * maxY;
+      const fVal = minY + (i / ySteps) * yRange;
       const y = pad.top + ph - (i / ySteps) * ph;
       ctx.beginPath();
       ctx.moveTo(pad.left, y);
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
-      ctx.fillText(`${fVal.toFixed(2)} N`, pad.left - 6 * dpr, y);
+      const signStr = fVal > 0.005 ? "+" : "";
+      ctx.fillText(`${signStr}${fVal.toFixed(2)} N`, pad.left - 6 * dpr, y);
+    }
+
+    // Zero Reference Baseline (Cyan dashed line)
+    const zeroY = pad.top + ph - ((0.0 - minY) / yRange) * ph;
+    if (zeroY >= pad.top && zeroY <= pad.top + ph) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+      ctx.lineWidth = 1.2 * dpr;
+      ctx.setLineDash([4 * dpr, 4 * dpr]);
+      ctx.beginPath();
+      ctx.moveTo(pad.left, zeroY);
+      ctx.lineTo(w - pad.right, zeroY);
+      ctx.stroke();
+      ctx.restore();
     }
 
     // Vertical grid (Displacement)
@@ -2603,21 +2721,21 @@ class UnifiedForceBenchApp {
     if (this.testDataPoints.length >= 2) {
       ctx.save();
 
-      // 1. Smooth gradient area fill under the curve
+      // 1. Smooth gradient area fill from curve to 0 baseline
       const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + ph);
       grad.addColorStop(0, "rgba(192, 132, 252, 0.22)");
-      grad.addColorStop(1, "rgba(192, 132, 252, 0.01)");
+      grad.addColorStop(1, "rgba(192, 132, 252, 0.02)");
 
       ctx.beginPath();
       const firstX = pad.left + (this.testDataPoints[0].dispMm / maxX) * pw;
       const lastX = pad.left + (this.testDataPoints[this.testDataPoints.length - 1].dispMm / maxX) * pw;
-      ctx.moveTo(firstX, pad.top + ph);
+      ctx.moveTo(firstX, zeroY);
       this.testDataPoints.forEach(p => {
         const x = pad.left + (p.dispMm / maxX) * pw;
-        const y = pad.top + ph - (p.forceAbsN / maxY) * ph;
+        const y = pad.top + ph - ((p.forceN - minY) / yRange) * ph;
         ctx.lineTo(x, y);
       });
-      ctx.lineTo(lastX, pad.top + ph);
+      ctx.lineTo(lastX, zeroY);
       ctx.closePath();
       ctx.fillStyle = grad;
       ctx.fill();
@@ -2631,16 +2749,16 @@ class UnifiedForceBenchApp {
 
       this.testDataPoints.forEach((p, i) => {
         const x = pad.left + (p.dispMm / maxX) * pw;
-        const y = pad.top + ph - (p.forceAbsN / maxY) * ph;
+        const y = pad.top + ph - ((p.forceN - minY) / yRange) * ph;
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
       ctx.stroke();
 
-      // 3. Peak Point Reticle
-      if (this.testPeakForceN > 0) {
+      // 3. Peak Point Reticle (Min force for pull, Max force for push)
+      if (Math.abs(this.testPeakForceN) > 0.001) {
         const peakX = pad.left + (this.testDispAtPeakMm / maxX) * pw;
-        const peakY = pad.top + ph - (Math.abs(this.testPeakForceN) / maxY) * ph;
+        const peakY = pad.top + ph - ((this.testPeakForceN - minY) / yRange) * ph;
         ctx.fillStyle = "#f43f5e";
         ctx.beginPath();
         ctx.arc(peakX, peakY, 4.5 * dpr, 0, Math.PI * 2);
@@ -2648,12 +2766,20 @@ class UnifiedForceBenchApp {
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 1.5 * dpr;
         ctx.stroke();
+
+        ctx.fillStyle = "#f43f5e";
+        ctx.font = `600 ${8.5 * dpr}px "JetBrains Mono", monospace`;
+        ctx.textAlign = (peakX > w - 85 * dpr) ? "right" : "left";
+        const signPk = this.testPeakForceN > 0.001 ? "+" : "";
+        const labelX = (peakX > w - 85 * dpr) ? peakX - 8 * dpr : peakX + 8 * dpr;
+        const pkTitle = (this.testDirection === "pull") ? "MIN" : "MAX";
+        ctx.fillText(`${pkTitle} ${signPk}${this.testPeakForceN.toFixed(2)}N`, labelX, peakY - 4 * dpr);
       }
 
       // 4. Live Cursor Head at Current Tip
       const pLast = this.testDataPoints[this.testDataPoints.length - 1];
       const curX = pad.left + (pLast.dispMm / maxX) * pw;
-      const curY = pad.top + ph - (pLast.forceAbsN / maxY) * ph;
+      const curY = pad.top + ph - ((pLast.forceN - minY) / yRange) * ph;
 
       ctx.fillStyle = "#a855f7";
       ctx.beginPath();
@@ -2664,7 +2790,8 @@ class UnifiedForceBenchApp {
       ctx.stroke();
 
       // Floating live tooltip pill
-      const hudText = `${pLast.dispMm.toFixed(2)} mm • ${pLast.forceAbsN.toFixed(2)} N`;
+      const signTip = pLast.forceN > 0.001 ? "+" : "";
+      const hudText = `${pLast.dispMm.toFixed(2)} mm • ${signTip}${pLast.forceN.toFixed(2)} N`;
       ctx.font = `600 ${9 * dpr}px "JetBrains Mono", monospace`;
       const textW = ctx.measureText(hudText).width;
       const pillW = textW + 12 * dpr;
@@ -2693,18 +2820,26 @@ class UnifiedForceBenchApp {
       // First data point captured during active test
       const p = this.testDataPoints[0];
       const curX = pad.left + (p.dispMm / maxX) * pw;
-      const curY = pad.top + ph - (p.forceAbsN / maxY) * ph;
+      const curY = pad.top + ph - ((p.forceN - minY) / yRange) * ph;
       ctx.fillStyle = "#a855f7";
       ctx.beginPath();
       ctx.arc(curX, curY, 5 * dpr, 0, Math.PI * 2);
       ctx.fill();
+    } else if (this.isTestRunning) {
+      // Initializing state right after test start
+      ctx.fillStyle = "rgba(16, 185, 129, 0.8)";
+      ctx.font = `600 ${10 * dpr}px "Outfit", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const dirUpper = this.testDirection ? this.testDirection.toUpperCase() : "TEST";
+      ctx.fillText(`STARTING ${dirUpper} TEST • ACQUIRING BASELINE...`, pad.left + pw / 2, pad.top + ph / 2);
     } else {
       // Clean static awaiting state when not running a test
       ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
       ctx.font = `600 ${10 * dpr}px "Outfit", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText('AWAITING TEST SEQUENCE • PRESS "START PUSH / PULL TEST" TO BEGIN', pad.left + pw / 2, pad.top + ph / 2);
+      ctx.fillText('AWAITING TEST SEQUENCE • PRESS "PUSH TEST" OR "PULL TEST" TO BEGIN', pad.left + pw / 2, pad.top + ph / 2);
     }
   }
 
