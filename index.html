@@ -161,14 +161,51 @@
       opacity: 1;
     }
 
+    .card-compact {
+      padding: 16px 18px;
+      gap: 10px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.55);
+    }
+
+    .card-compact .card-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+    }
+
+    .card-compact .card-icon svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .card-compact .card-title {
+      font-size: 1.05rem;
+    }
+
+    .card-compact .card-desc {
+      font-size: 0.8rem;
+      line-height: 1.4;
+    }
+
+    .card-compact .tag {
+      font-size: 0.66rem;
+      padding: 2px 6px;
+    }
+
+    .card-compact .card-action {
+      font-size: 0.8rem;
+      margin-top: 4px;
+    }
+
     .card-1 {
       --card-accent: #38bdf8;
-      --card-glow: rgba(56, 189, 248, 0.25);
+      --card-glow: rgba(56, 189, 248, 0.2);
     }
 
     .card-2 {
       --card-accent: #a855f7;
-      --card-glow: rgba(168, 85, 247, 0.25);
+      --card-glow: rgba(168, 85, 247, 0.2);
     }
 
     .card-icon {
@@ -246,9 +283,9 @@
     </div>
 
     <div class="grid">
-      <!-- Card Unified: Unified Force Bench -->
+      <!-- Card Unified: Unified Force Bench (Primary Flagship App) -->
       <a href="UnifiedForceBench/" class="hub-card card-featured card-unified">
-        <span class="featured-badge">★ Dual-Device Hub</span>
+        <span class="featured-badge">★ Primary Station</span>
         <div class="card-icon" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.3);">
           <svg viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -257,50 +294,49 @@
             <path d="M7 8h10M7 12h5"></path>
           </svg>
         </div>
-        <div class="card-title" style="font-size: 1.5rem;">Unified Force-Bench Station (U2D2 + Arduino)</div>
+        <div class="card-title" style="font-size: 1.5rem;">Unified Force Bench</div>
         <div class="card-desc">
-          Complete integrated workbench for mechanical testing. Controls Robotis Dynamixel via U2D2 on lead screw (1 rev/mm) with selectable mm/s step jogging and continuous motion, synchronized with Arduino telemetry (load cell force & heated chamber temperature). Features 3 real-time subplots (Temp, Force, Push/Pull curve) and automated test routine execution.
+          Complete unified workbench for mechanical testing. Controls Robotis Dynamixel via U2D2 on lead screw (1 rev/mm) with selectable mm/s step jogging and continuous motion, synchronized with Arduino telemetry (load cell force & heated chamber temperature). Features 3 real-time subplots (Temp, Force, Push/Pull curve) and automated Push/Pull characterization routines.
         </div>
         <div class="tag-list">
-          <span class="tag" style="color: var(--accent-cyan);">Dual Web Serial</span>
+          <span class="tag" style="color: var(--accent-cyan); font-weight: 600;">Dual Web Serial</span>
           <span class="tag">1 rev / mm Lead Screw</span>
           <span class="tag">Fixed mm/s Jogging</span>
-          <span class="tag">Fast Forward / Rewind</span>
-          <span class="tag">3x Subplots (Temp, Force, Push/Pull)</span>
-          <span class="tag">Encoder Zero Reset</span>
+          <span class="tag">Push &amp; Pull Test Suite</span>
+          <span class="tag">3x Live Subplots</span>
+          <span class="tag">Tare &amp; Calibration</span>
           <span class="tag">CSV Data Export</span>
         </div>
         <div class="card-action" style="font-size: 0.95rem;">
-          <span>Launch Unified Force-Bench Station</span>
+          <span>Launch Unified Force Bench</span>
           <span>→</span>
         </div>
       </a>
 
-      <!-- Card 1: WebSerialMonitorPlotter -->
-      <a href="WebSerialMonitorPlotter/" class="hub-card card-1">
+      <!-- Card 1: WebSerialMonitorPlotter (Compact Utility) -->
+      <a href="WebSerialMonitorPlotter/" class="hub-card card-1 card-compact">
         <div class="card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
           </svg>
         </div>
-        <div class="card-title">Serial Monitor & Plotter</div>
+        <div class="card-title">Serial Monitor &amp; Plotter</div>
         <div class="card-desc">
-          Bidirectional serial terminal and high-speed 60fps canvas oscilloscope. Features regex telemetry extraction, dual-axis split graphs, and live CSV data logging.
+          Bidirectional serial terminal and 60fps canvas oscilloscope for raw Arduino telemetry, dual-axis graphs, and CSV logging.
         </div>
         <div class="tag-list">
           <span class="tag">60 FPS Plotter</span>
           <span class="tag">Dual Y-Axis</span>
-          <span class="tag">Regex Parser</span>
           <span class="tag">CSV Export</span>
         </div>
         <div class="card-action">
-          <span>Open Serial Monitor & Plotter</span>
+          <span>Open Plotter</span>
           <span>→</span>
         </div>
       </a>
 
-      <!-- Card 2: WebDynamixelInterface -->
-      <a href="WebDynamixelInterface/" class="hub-card card-2">
+      <!-- Card 2: WebDynamixelInterface (Compact Utility) -->
+      <a href="WebDynamixelInterface/" class="hub-card card-2 card-compact">
         <div class="card-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
@@ -309,16 +345,15 @@
         </div>
         <div class="card-title">Web Dynamixel Interface</div>
         <div class="card-desc">
-          Professional controller for Robotis Dynamixel smart actuators. Supports Protocol 1.0 & 2.0, bus scanning, interactive rotary horn dial, live scope, sweep tests, and packet inspection.
+          Actuator diagnostic utility. Protocol 1.0 &amp; 2.0 scanning, interactive rotary horn dial, sweep tests, and packet inspector.
         </div>
         <div class="tag-list">
-          <span class="tag">Protocol 1.0 & 2.0</span>
-          <span class="tag">Bus Scanner</span>
-          <span class="tag">Rotary Horn Dial</span>
-          <span class="tag">Packet Analyzer</span>
+          <span class="tag">Protocol 1.0 &amp; 2.0</span>
+          <span class="tag">Rotary Dial</span>
+          <span class="tag">Bus Scan</span>
         </div>
         <div class="card-action">
-          <span>Open Dynamixel Interface</span>
+          <span>Open Dynamixel</span>
           <span>→</span>
         </div>
       </a>
